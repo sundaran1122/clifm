@@ -149,13 +149,15 @@ in FreeBSD, but is deprecated */
 #define PNL "clifm" /* Program name lowercase */
 /* #define TMP_DIR "/tmp/clifm" */
 /* If no formatting, puts (or write) is faster than printf */
-/* #define CLEAR puts("\x1b[c") */
-#define CLEAR write(STDOUT_FILENO, "\ec", 3)
-#define VERSION "0.27.1"
+/* #define CLEAR puts("\x1b[c") "\x1b[2J\x1b[1;1H"*/
+//#define CLEAR write(STDOUT_FILENO, "\033c", 3);
+#define CLEAR write(STDOUT_FILENO, "\x1b[2J\x1b[3J\x1b[H", 11);
+/* #define CLEAR write(STDOUT_FILENO, "\033[2J\033[H", 7); */
+#define VERSION "0.27.2"
 #define AUTHOR "L. Abramovich"
 #define CONTACT "johndoe.arch@outlook.com"
 #define WEBSITE "https://github.com/leo-arch/clifm"
-#define DATE "January 29, 2021"
+#define DATE "January 30, 2021"
 #define LICENSE "GPL2+"
 
 /* Define flags for program options and internal use */
@@ -373,11 +375,12 @@ int new_instance(char *dir);
 int *get_hex_num(char *str);
 int create_config(char *file);
 int skip_nonexec(const struct dirent *entry);
+void print_tips(int all);
 
 /* Sorting functions */
 int sort_function(char **arg);
 void print_sort_method(void);
-#if !defined __FreeBSD__
+#if !defined __FreeBSD__ && !defined _BE_POSIX
 int m_versionsort(const struct dirent **a, const struct dirent **b);
 #endif
 int m_alphasort(const struct dirent **a, const struct dirent **b);
@@ -425,11 +428,14 @@ struct fileinfo
 	size_t filesn; /* Number of files in subdir */
 	int exists;
 	int brokenlink;
+	int linkdir;
 	int exec;
 	mode_t type;
 	off_t size;
 	int ruser; /* User read permission for dir */
 };
+
+struct fileinfo *file_info = (struct fileinfo *)NULL;
 
 /* Struct to specify which parameters have been set from the command
  * line, to avoid overriding them with init_config(). While no command
@@ -480,7 +486,7 @@ short splash_screen = -1, welcome_message = -1, ext_cmd_ok = -1,
 	home_ok = 1, config_ok = 1, trash_ok = 1, selfile_ok = 1, tips = -1,
 	mime_match = 0, logs_enabled = -1, sort = -1, files_counter = -1,
 	light_mode = -1, dir_indicator = -1, classify = -1, sort_switch = 0,
-	sort_reverse = 0;
+	sort_reverse = 0, autocd = -1, auto_open = -1;
 	/* -1 means non-initialized or unset. Once initialized, these variables
 	 * are always either zero or one */
 /*	sel_no_sel=0 */
@@ -530,75 +536,6 @@ char *user = (char *)NULL, *path = (char *)NULL,
 	*TMP_DIR = (char *)NULL, div_line_char = -1, *opener = (char *)NULL,
 	**old_pwd = (char **)NULL;
 
-const char *TIPS[] = {
-	"If need more speed, try the light mode (A-y)",
-	"The Selection Box is shared among different instances of CliFM",
-	"Select files here and there with the 's' command",
-	"Use wildcards with the 's' command: 's *.c'",
-	"ELN's and the 'sel' keyword work for shell commands as well: 'file 1 sel'",
-	"Press TAB to automatically expand an ELN: 'o 2' -> TAB -> 'o FILENAME'",
-	"Easily copy everything in CWD into another directory: 's * && c sel ELN/DIR'",
-	"Use ranges (ELN-ELN) to easily move multiple files: 'm 3-12 ELN/DIR'",
-	"Trash files with a simple 't ELN'",
-	"Get mime information for a file: 'mm info ELN'",
-	"Edit the mimelist file with 'mm edit'",
-	"If too many files are listed, try enabling the pager ('pg on')",
-	"Once in the pager, go backwards pressing the keyboard shortcut provided by your terminal emulator",
-	"Press 'q' to stop the pager",
-	"Press 'A-l' to switch to long view mode",
-	"Search for files using the slash command: '/*.png'",
-	"Add a new bookmark by just entering 'bm ELN/FILE'",
-	"Use c, l, m, md, and r instead of cp, ln, mv, mkdir, and rm",
-	"Access a remote file system using the 'net' command",
-	"Manage default associated applications with the 'mime' command",
-	"Go back and forth in the directory history with 'A-j' and 'A-k'",
-	"Open a new instance of CliFM with the 'x' command: 'x ELN/DIR'",
-	"Send a command directly to the system shell with ';CMD'",
-	"Run the last executed command by just running '!!'",
-	"Import aliases from file using 'alias import FILE'",
-	"List available aliases by running 'alias'",
-	"Open and edit the configuration file with 'edit'",
-	"Find a description for each CLiFM command running 'cmd'",
-	"Print the color codes list entering 'cc'",
-	"Press 'A-i' to toggle hidden files on/off",
-	"List mountpoints by pressing 'A-m'",
-	"Allow the use of shell commands with the -x option: 'clifm -x'",
-	"Go to the root directory by just pressing 'A-r'",
-	"Go to the home directory by just pressing 'A-e'",
-	"Press 'F10' to open and edit the configuration file",
-	"Customize the starting using the -p option: 'clifm -p PATH'",
-	"Use the 'o' command to open files and directories: 'o 12'",
-	"Bypass the resource opener specifying an application: 'o 12 leafpad'",
-	"Open a file and send it to the background running 'o 24 &'",
-	"Create a custom prompt editing the configuration file",
-	"Customize color codes using the configuration file",
-	"Open the bookmarks manager by just pressing 'A-b'",
-	"Chain commands using ; and &&: 's 2 7-10; r sel'",
-	"Add emojis to the prompt by copying them to the Prompt line in the configuration file",
-	"Create a new profile running 'pf add PROFILE' or 'clifm -P PROFILE'",
-	"Switch profiles using 'pf set PROFILE'",
-	"Delete a profile using 'pf del PROFILE'",
-	"Copy selected files into CWD by just running 'v sel'",
-	"Use 'p ELN' to print file properties for ELN",
-	"Deselect all selected files by pressing 'A-d'",
-	"Select all files in CWD by pressing 'A-a'",
-	"Jump to the Selection Box by pressing 'A-s'",
-	"Restore trashed files using the 'u' command",
-	"Empty the trash bin running 't clear'",
-	"Press A-f to toggle list-folders-first on/off",
-	"Use the 'fc' command to disable the files counter",
-	"Take a look at the splash screen with the 'splash' command",
-	"Have some fun trying the 'bonus' command",
-	"Launch the default system shell in CWD using ':' or ';'",
-	"Use 'A-z' and 'A-x' to switch sorting methods",
-	"Reverse sorting order using the 'rev' option: 'st rev'",
-	"Compress and decompress files using the 'ac' and 'ad' commands respectivelly",
-	"Rename multiple files at once with the bulk rename function: 'br *.txt'",
-	NULL
-};
-
-size_t tipsn = (sizeof(TIPS) / sizeof(TIPS[0])) - 1;
-
 	/* This is not a comprehensive list of commands. It only lists
 	 * commands long version for TAB completion */
 const char *INTERNAL_CMDS[] = { "alias", "open", "prop", "back", "forth",
@@ -607,7 +544,8 @@ const char *INTERNAL_CMDS[] = { "alias", "open", "prop", "back", "forth",
 		"colors", "version", "splash", "folders first", "opener", 
 		"exit", "quit", "pager", "trash", "undel", "messages", 
 		"mountpoints", "bookmarks", "log", "untrash", "unicode", 
-		"profile", "shell", "mime", "sort", "tips", NULL };
+		"profile", "shell", "mime", "sort", "tips", "autocd",
+		"autoopen", NULL };
 
 #define DEFAULT_PROMPT "\\A \\u:\\H \\[\\e[00;36m\\]\\w\\n\\[\\e[0m\\]\
 \\z\\[\\e[0;34m\\] \\$\\[\\e[0m\\] "
@@ -1054,13 +992,98 @@ main(int argc, char **argv)
 		}
 	}
 	
-	return EXIT_SUCCESS; /* Never reached */
+	return exit_code; /* Never reached */
 }
 
 
 			/** #################################
 			 * #     FUNCTIONS DEFINITIONS     #
 			 * ################################# */
+
+void
+print_tips(int all)
+/* Print either all tips (if ALL == 1) or just a random one (ALL == 0) */
+{
+	const char *TIPS[] = {
+		"If need more speed, try the light mode (A-y)",
+		"The Selection Box is shared among different instances of CliFM",
+		"Select files here and there with the 's' command",
+		"Use wildcards with the 's' command: 's *.c'",
+		"ELN's and the 'sel' keyword work for shell commands as well: 'file 1 sel'",
+		"Press TAB to automatically expand an ELN: 'o 2' -> TAB -> 'o FILENAME'",
+		"Easily copy everything in CWD into another directory: 's * && c sel ELN/DIR'",
+		"Use ranges (ELN-ELN) to easily move multiple files: 'm 3-12 ELN/DIR'",
+		"Trash files with a simple 't ELN'",
+		"Get mime information for a file: 'mm info ELN'",
+		"Edit the mimelist file with 'mm edit'",
+		"If too many files are listed, try enabling the pager ('pg on')",
+		"Once in the pager, go backwards pressing the keyboard shortcut provided by your terminal emulator",
+		"Press 'q' to stop the pager",
+		"Press 'A-l' to switch to long view mode",
+		"Search for files using the slash command: '/*.png'",
+		"Add a new bookmark by just entering 'bm ELN/FILE'",
+		"Use c, l, m, md, and r instead of cp, ln, mv, mkdir, and rm",
+		"Access a remote file system using the 'net' command",
+		"Manage default associated applications with the 'mime' command",
+		"Go back and forth in the directory history with 'A-j' and 'A-k'",
+		"Open a new instance of CliFM with the 'x' command: 'x ELN/DIR'",
+		"Send a command directly to the system shell with ';CMD'",
+		"Run the last executed command by just running '!!'",
+		"Import aliases from file using 'alias import FILE'",
+		"List available aliases by running 'alias'",
+		"Open and edit the configuration file with 'edit'",
+		"Find a description for each CLiFM command running 'cmd'",
+		"Print the color codes list entering 'cc'",
+		"Press 'A-i' to toggle hidden files on/off",
+		"List mountpoints by pressing 'A-m'",
+		"Allow the use of shell commands with the -x option: 'clifm -x'",
+		"Go to the root directory by just pressing 'A-r'",
+		"Go to the home directory by just pressing 'A-e'",
+		"Press 'F10' to open and edit the configuration file",
+		"Customize the starting using the -p option: 'clifm -p PATH'",
+		"Use the 'o' command to open files and directories: 'o 12'",
+		"Bypass the resource opener specifying an application: 'o 12 leafpad'",
+		"Open a file and send it to the background running 'o 24 &'",
+		"Create a custom prompt editing the configuration file",
+		"Customize color codes using the configuration file",
+		"Open the bookmarks manager by just pressing 'A-b'",
+		"Chain commands using ; and &&: 's 2 7-10; r sel'",
+		"Add emojis to the prompt by copying them to the Prompt line in the configuration file",
+		"Create a new profile running 'pf add PROFILE' or 'clifm -P PROFILE'",
+		"Switch profiles using 'pf set PROFILE'",
+		"Delete a profile using 'pf del PROFILE'",
+		"Copy selected files into CWD by just running 'v sel'",
+		"Use 'p ELN' to print file properties for ELN",
+		"Deselect all selected files by pressing 'A-d'",
+		"Select all files in CWD by pressing 'A-a'",
+		"Jump to the Selection Box by pressing 'A-s'",
+		"Restore trashed files using the 'u' command",
+		"Empty the trash bin running 't clear'",
+		"Press A-f to toggle list-folders-first on/off",
+		"Use the 'fc' command to disable the files counter",
+		"Take a look at the splash screen with the 'splash' command",
+		"Have some fun trying the 'bonus' command",
+		"Launch the default system shell in CWD using ':' or ';'",
+		"Use 'A-z' and 'A-x' to switch sorting methods",
+		"Reverse sorting order using the 'rev' option: 'st rev'",
+		"Compress and decompress files using the 'ac' and 'ad' commands respectivelly",
+		"Rename multiple files at once with the bulk rename function: 'br *.txt'",
+		NULL
+	};
+
+	size_t tipsn = (sizeof(TIPS) / sizeof(TIPS[0])) - 1;
+
+	if (all) {
+		size_t i;
+		for (i = 0; i < tipsn; i++)
+			printf("%sTIP %d%s: %s\n", bold, i, NC, TIPS[i]);
+
+		return;
+	}
+
+	srand(time(NULL));
+	printf("%sTIP%s: %s\n", bold, NC, TIPS[rand() % tipsn]);
+}
 
 int
 is_compressed(char *file)
@@ -1160,15 +1183,16 @@ int
 zstandard(char *in_file, char *out_file, char mode, char op)
 /* If MODE is 'c', compress IN_FILE producing a zstandard compressed
  * file named OUT_FILE. If MODE is 'd', extract, test or get
- * information about IN_FILE. Returns zero on success and one on
- * error */
+ * information about IN_FILE. OP is used only for the 'd' mode: it
+ * tells if we have one or multiple file. Returns zero on success and
+ * one on error */
 {
 	int exit_status = EXIT_SUCCESS;
 
 	char *deq_file = dequote_str(in_file, 0);
 
 	if (!deq_file) {
-		fprintf(stderr, "archiver: '%s': Error dequoting file\n",
+		fprintf(stderr, _("archiver: '%s': Error dequoting file\n"),
 				in_file);
 		return EXIT_FAILURE;
 	}
@@ -1217,7 +1241,7 @@ zstandard(char *in_file, char *out_file, char mode, char op)
 	}
 
 
-	printf("%s[e]%sxtract %s[t]%sest %s[i]%snfo %s[q]%suit\n",
+	printf(_("%s[e]%sxtract %s[t]%sest %s[i]%snfo %s[q]%suit\n"),
 		   bold, NC, bold, NC, bold, NC, bold, NC);
 
 	char *operation = (char *)NULL;
@@ -1279,7 +1303,8 @@ archiver(char **args, char mode)
 /* Handle archives and/or compressed files (ARGS) according to MODE:
  * 'c' for archiving/compression, and 'd' for dearchiving/decompression
  * (including listing, extracting, repacking, and mounting). Returns
- * zero on success and one on error */
+ * zero on success and one on error. Depends on 'zstd' for Zdtandard
+ * files 'atool' and 'archivemount' for the remaining types. */
 {
 	size_t i;
 	int uncompressed = 0, exit_status = EXIT_SUCCESS;
@@ -1326,11 +1351,11 @@ archiver(char **args, char mode)
 			/* Multiple files */
 			if (args[2]) {
 
-				printf("\n%sNOTE%s: Zstandard does not support "
+				printf(_("\n%sNOTE%s: Zstandard does not support "
 					   "compression of multiple files into one single "
 					   "compressed file. Files will be compressed rather "
 					   "into multiple compressed files using original "
-					   "filenames\n", bold, NC);
+					   "filenames\n"), bold, NC);
 
 				for (i = 1; args[i]; i++) {
 					if (zstandard(args[i], NULL, 'c', 0)
@@ -1422,14 +1447,14 @@ archiver(char **args, char mode)
 		/* Multiple files */
 		if (files_num > 1) {
 
-			printf("%sNOTE%s: Using Zstandard\n", bold, NC);
-			printf("%s[e]%sxtract %s[t]%sest %s[i]%snfo %s[q]%suit\n",
+			printf(_("%sNOTE%s: Using Zstandard\n"), bold, NC);
+			printf(_("%s[e]%sxtract %s[t]%sest %s[i]%snfo %s[q]%suit\n"),
 				   bold, NC, bold, NC, bold, NC, bold, NC);
 
 			char *operation = (char *)NULL;
 			char sel_op = 0;
 			while(!operation) {
-				operation = rl_no_hist("Operation: ");
+				operation = rl_no_hist(_("Operation: "));
 
 				if (!operation)
 					continue;
@@ -1643,12 +1668,12 @@ archiver(char **args, char mode)
 				}
 
 				/* Ask for extraction path */
-				printf("%sFile%s: %s\n", bold, NC, args[i]);
+				printf(_("%sFile%s: %s\n"), bold, NC, args[i]);
 
 				char *ext_path = (char *)NULL;
 
 				while (!ext_path) {
-					ext_path = rl_no_hist("Path: ");
+					ext_path = rl_no_hist(_("Path: "));
 
 					if (!ext_path)
 						continue;
@@ -1677,7 +1702,7 @@ archiver(char **args, char mode)
 		case 'l':
 			for (i = 1; args[i]; i++) {
 
-				printf("%s%sFile%s: %s\n", (i > 1) ? "\n" : "",
+				printf(_("%s%sFile%s: %s\n"), (i > 1) ? "\n" : "",
 					   bold, NC, args[i]);
 
 				char *cmd[] = { "atool", "-l", args[i], NULL };
@@ -1767,7 +1792,7 @@ archiver(char **args, char mode)
 
 		case 'r': {
 			/* Ask for new archive/compression format */
-			puts("Enter 'q' to quit");
+			puts(_("Enter 'q' to quit"));
 
 			char *format = (char *)NULL;
 			while (!format) {
@@ -1816,7 +1841,7 @@ bulk_rename(char **args)
  * a temporary file, which is opened via the mime function and shown
  * to the user to modify it. Once the filenames have been modified and
  * saved, modifications are printed on the screen and the user is
- * asked whether to perform the actual bulk renaming (via mv) or not
+ * asked whether to perform the actual bulk renaming (via mv) or not.
  * I took this bulk rename method, just because it is quite simple and
  * KISS, from the fff filemanager. So, thanks fff! */
 {
@@ -1846,8 +1871,8 @@ bulk_rename(char **args)
 		if (strchr(args[i], '\\')) {
 			char *deq_file = dequote_str(args[i], 0);
 			if (!deq_file) {
-				fprintf(stderr, "bulk: '%s': Error dequoting filename\n",
-						args[i]);
+				fprintf(stderr, _("bulk: '%s': Error dequoting "
+						"filename\n"), args[i]);
 				continue;
 			}
 			strcpy(args[i], deq_file);
@@ -1891,7 +1916,7 @@ bulk_rename(char **args)
 	 * match, nothing was modified */
 	stat(BULK_FILE, &file_attrib);
 	if (mtime_bfr == file_attrib.st_mtime) {
-		printf("bulk: Nothing to do\n");
+		puts(_("bulk: Nothing to do"));
 		if (remove(BULK_FILE) == -1) {
 			_err('e', PRINT_PROMPT, "%s: '%s': %s\n", PROGRAM_NAME,
 				 BULK_FILE, strerror(errno));
@@ -1919,7 +1944,7 @@ bulk_rename(char **args)
 	}
 
 	if (arg_total != file_total) {
-		fprintf(stderr, "bulk: Line mismatch in rename file\n");
+		fputs(_("bulk: Line mismatch in rename file\n"), stderr);
 		fclose(bulk_fp);
 		if (remove(BULK_FILE) == -1)
 			_err('e', PRINT_PROMPT, "%s: '%s': %s\n", PROGRAM_NAME,
@@ -1950,7 +1975,7 @@ bulk_rename(char **args)
 
 	/* If no filename was modified */
 	if (!modified) {
-		printf("bulk: Nothing to do\n");
+		puts(_("bulk: Nothing to do"));
 		if (remove(BULK_FILE) == -1) {
 			_err('e', PRINT_PROMPT, "%s: '%s': %s\n", PROGRAM_NAME,
 				 BULK_FILE, strerror(errno));
@@ -1964,7 +1989,7 @@ bulk_rename(char **args)
 	/* Ask the user for confirmation */
 	char *answer = (char *)NULL;
 	while (!answer) {
-		answer = readline("Continue? [y/N] ");
+		answer = readline(_("Continue? [y/N] "));
 
 		if (strlen(answer) > 1) {
 			free(answer);
@@ -2033,33 +2058,33 @@ bulk_rename(char **args)
 void
 print_sort_method(void)
 {
-	printf("%s->%s Sorted by: ", cyan, NC);
+	printf(_("%s->%s Sorted by: "), cyan, NC);
 	switch(sort) {
-		case 0: puts("none"); break;
-		case 1: printf("name %s\n", (sort_reverse) ? "[rev]" : "");
+		case 0: puts(_("none")); break;
+		case 1: printf(_("name %s\n"), (sort_reverse) ? "[rev]" : "");
 			break;
-		case 2: printf("size %s\n", (sort_reverse) ? "[rev]" : "");
+		case 2: printf(_("size %s\n"), (sort_reverse) ? "[rev]" : "");
 			break;
-		case 3: printf("atime %s\n", (sort_reverse) ? "[rev]" : "");
+		case 3: printf(_("atime %s\n"), (sort_reverse) ? "[rev]" : "");
 			break;
 		case 4:
 		#if defined(HAVE_ST_BIRTHTIME) \
 			|| defined(__BSD_VISIBLE) || defined(_STATX)
-				printf("btime %s\n", (sort_reverse) ? "[rev]" : "");
+				printf(_("btime %s\n"), (sort_reverse) ? "[rev]" : "");
 			#else
-				printf("btime (not found: using 'ctime') %s\n",
+				printf(_("btime (not available: using 'ctime') %s\n"),
 					   (sort_reverse) ? "[rev]" : "");
 			#endif
 			break;
-		case 5: printf("ctime %s\n", (sort_reverse) ? "[rev]" : "");
+		case 5: printf(_("ctime %s\n"), (sort_reverse) ? "[rev]" : "");
 			break;
-		case 6: printf("mtime %s\n", (sort_reverse) ? "[rev]" : "");
+		case 6: printf(_("mtime %s\n"), (sort_reverse) ? "[rev]" : "");
 			break;
-		#if __FreeBSD__
-		case 7: printf("version (not available: using 'name') %s\n",
+		#if __FreeBSD__ || _BE_POSIX
+		case 7: printf(_("version (not available: using 'name') %s\n"),
 					   (sort_reverse) ? "[rev]" : "");
 		#else
-		case 7: printf("version %s\n", (sort_reverse) ? "[rev]" : "");
+		case 7: printf(_("version %s\n"), (sort_reverse) ? "[rev]" : "");
 		#endif
 			break;
 	}
@@ -2070,37 +2095,48 @@ sort_function(char **arg)
 {
 	int exit_status = EXIT_FAILURE;
 
+	/* No argument: Just print current sorting method */
 	if (!arg[1]) {
-		printf("Sorting method: ");
+		printf(_("Sorting method: "));
 		switch(sort) {
 			case 0:
-				printf("none %s\n", (sort_reverse) ? "[rev]": "");
+				printf(_("none %s\n"), (sort_reverse) ? "[rev]": "");
 				break;
 			case 1:
-				printf("name %s\n", (sort_reverse) ? "[rev]": "");
+				printf(_("name %s\n"), (sort_reverse) ? "[rev]": "");
 				break;
 			case 2:
-				printf("size %s\n", (sort_reverse) ? "[rev]": "");
+				printf(_("size %s\n"), (sort_reverse) ? "[rev]": "");
 				break;
 			case 3:
-				printf("atime %s\n", (sort_reverse) ? "[rev]": "");
+				printf(_("atime %s\n"), (sort_reverse) ? "[rev]": "");
 				break;
 			case 4:
-				printf("btime %s\n", (sort_reverse) ? "[rev]": "");
+			#if defined(HAVE_ST_BIRTHTIME) \
+			|| defined(__BSD_VISIBLE) || defined(_STATX)
+				printf(_("btime %s\n"), (sort_reverse) ? "[rev]": "");
+			#else
+				printf(_("ctime %s\n"), (sort_reverse) ? "[rev]": "");
+			#endif
 				break;
 			case 5:
-				printf("ctime %s\n", (sort_reverse) ? "[rev]": "");
+				printf(_("ctime %s\n"), (sort_reverse) ? "[rev]": "");
 				break;
 			case 6:
-				printf("mtime %s\n", (sort_reverse) ? "[rev]": "");
+				printf(_("mtime %s\n"), (sort_reverse) ? "[rev]": "");
 				break;
 			case 7:
-				printf("version %s\n", (sort_reverse) ? "[rev]": "");
+			#if __FreeBSD__ || _BE_POSIX
+				printf(_("name %s\n"), (sort_reverse) ? "[rev]": "");
+			#else
+				printf(_("version %s\n"), (sort_reverse) ? "[rev]": "");
+			#endif
 				break;
 		}
 		return EXIT_SUCCESS;
 	}
 
+	/* Argument is alphanumerical string */
 	else if (!is_number(arg[1])) {
 		if (strcmp(arg[1], "rev") == 0) {
 
@@ -2122,36 +2158,44 @@ sort_function(char **arg)
 
 			return exit_status;
 		}
+
 		/* If arg1 is not a number and is not "rev", the fputs()
 		 * above is executed */
 	}
 
-	else if (atoi(arg[1]) >= 0 && atoi(arg[1]) <= sort_types) {
-		sort = atoi(arg[1]);
+	/* Argument is a number */
+	else {
+		int int_arg = atoi(arg[1]);
 
-		if (arg[2] && strcmp(arg[2], "rev") == 0) {
-			if (sort_reverse)
-				sort_reverse = 0;
-			else
-				sort_reverse = 1;			
+		if (int_arg >= 0 && int_arg <= sort_types) {
+			sort = int_arg;
+
+			if (arg[2] && strcmp(arg[2], "rev") == 0) {
+				if (sort_reverse)
+					sort_reverse = 0;
+				else
+					sort_reverse = 1;			
+			}
+
+			if (cd_lists_on_the_fly) {
+				sort_switch = 1;
+				while (files--)
+					free(dirlist[files]);
+				exit_status = list_dir();
+				sort_switch = 0;
+			}
+
+			return exit_status;
 		}
-
-		if (cd_lists_on_the_fly) {
-			sort_switch = 1;
-			while (files--)
-				free(dirlist[files]);
-			exit_status = list_dir();
-			sort_switch = 0;
-		}
-
-		return exit_status;
 	}
+
 	/* If arg1 is a number but is not in the range 0-sort_types,
 	 * error */
 
 	fputs(_("Usage: st [METHOD] [rev]\nMETHOD: 0 = none, "
 			"1 = name, 2 = size, 3 = atime, 4 = btime, "
 		    "5 = ctime, 6 = mtime, 7 = version\n"), stderr);
+
 	return EXIT_FAILURE;
 }
 
@@ -2413,10 +2457,12 @@ m_alphasort(const struct dirent **a, const struct dirent **b)
 	return (ret - (ret * 2));
 }
 
-#if !defined __FreeBSD__
+/* NOTE: strverscmp() is a GNU extension, so that it will be available
+ * neither on FreeBSD nor when compiling with _BE_POSIX */
+#if !defined __FreeBSD__ && !defined _BE_POSIX
 int
 m_versionsort(const struct dirent **a, const struct dirent **b)
-/* Just a reverse sorting capable versionsort */
+/* Just a reverse sorting capable versionsort. */
 {
 	int ret = strverscmp((*a)->d_name, (*b)->d_name);
 
@@ -2840,8 +2886,11 @@ DividingLineChar='='\n\n"
 # add color to the prompt line\n\
 # \\]: End a sequence of non-printing characters\n\n"
 
-"Prompt=\"%s\"\n\n"
+"Prompt=\"%s\"\n\n",
 
+			DEFAULT_PROMPT);
+
+	fprintf(config_fp,
 "# MaxPath is only used for the /p option of the prompt: the current working \n\
 # directory will be abbreviated to its basename (everything after last slash)\n\
 # whenever the current path is longer than MaxPath.\n\
@@ -2853,6 +2902,12 @@ ShowHiddenFiles=true\n\
 LongViewMode=false\n\
 ExternalCommands=false\n\
 LogCmds=false\n\n"
+
+"# If set to true, a command name that is the name of a directory or a\n\
+# file is executed as if it were the argument to the the 'cd' or the \n\
+# 'open' commands respectivelly.\n\
+Autocd=true\n\
+AutoOpen=true\n\n"
 
 "# In light mode, colors and filetype checks (except the directory check,\n\
 # which is enabled by default) are disabled to speed up the listing\n\
@@ -2911,7 +2966,7 @@ ClearScreen=false\n\n"
 StartingPath=\n\n"
 "#END OF OPTIONS\n\n", 
 
-			DEFAULT_PROMPT, DEFAULT_TERM_CMD);
+			DEFAULT_TERM_CMD);
 
 	fputs(
 
@@ -4265,10 +4320,7 @@ int mime_open(char **args)
 	free(file_path);
 	free(app);
 
-	if (ret != EXIT_SUCCESS)
-		return EXIT_FAILURE;
-
-	return EXIT_SUCCESS;
+	return ret;
 }
 
 int
@@ -4774,7 +4826,8 @@ is_internal_c(const char *cmd)
 					"ver", "version", "?", "help", "cmd", "commands",
 					"colors", "cc", "fs", "mm", "mime", "x", "n",
 					"net", "lm", "st", "sort", "fc", "tips", "br",
-					"bulk", "opener", "ac", "ad", NULL };
+					"bulk", "opener", "ac", "ad", "acd", "autocd",
+					"ao", "autoopen", NULL };
 
 	short found = 0;
 	size_t i;
@@ -5486,6 +5539,15 @@ set_default_options(void)
 	max_path = 40;
 	logs_enabled = 0;
 	div_line_char = '=';
+	light_mode = 0;
+	dir_indicator = 1;
+	classify = 0;
+	share_selbox = 0;
+	sort = 1;
+	sort_reverse = 0;
+	tips = 1;
+	autocd = 1;
+	auto_open = 1;
 
 	strcpy(text_color, "\001\x1b[00;39m\002");
 	strcpy(eln_color, "\x1b[01;33m");
@@ -7636,7 +7698,6 @@ int
 readline_kbind_action(int count, int key) {
 	/* Prevent Valgrind from complaining about unused variable */
 	if (count) {}
-/*	int status = 0; */
 
 	/* Disable all keybindings while in the bookmarks or mountpoints
 	 * screen */
@@ -7671,15 +7732,21 @@ readline_kbind_action(int count, int key) {
 			return 0;
 		break;
 
-	/* A-c: Clear the current command line (== C-a, C-k). Very handy, 
+	/* A-c: Clear the current line (== C-a, C-k). Very handy, 
 	 * since C-c is currently disabled */
 	case 99:
-		puts("");
-		rl_replace_line("", 0);
-/*		puts("");
+
+		/* 1) Clear text typed so far (\x1b[2K) and move cursor to the
+		 * beginning of the current line (\r) */
+		write(STDOUT_FILENO, "\x1b[2K\r", 5);
+
+		/* 2) Clear the readline buffer */
 		rl_delete_text(0, rl_end);
 		rl_end = rl_point = 0;
-		rl_on_new_line(); */
+
+/*		puts("");
+		rl_replace_line("", 0); */
+
 		break;
 
 	/* A-d: Deselect all selected files */		
@@ -7947,6 +8014,9 @@ free_stuff(void)
 	size_t i = 0;
 
 	free(TMP_DIR);
+
+	if (file_info)
+		free(file_info);
 
 	if (opener)
 		free(opener);
@@ -8820,7 +8890,16 @@ my_rl_completion(const char *text, int start, int end)
 			rl_attempted_completion_over = 1;
 			return (char **)NULL;
 		}
-		matches = rl_completion_matches(text, &bin_cmd_generator);
+
+		if ((autocd || auto_open) && *text >= 0x31 && *text <= 0x39) {
+			int num_text = atoi(text);
+			if (is_number(text) && num_text > 0
+			&& num_text <= (int)files)
+					matches = rl_completion_matches(text,
+							  &filenames_generator);
+		}
+		else
+			matches = rl_completion_matches(text, &bin_cmd_generator);
 	}
 	else {
 		 
@@ -8831,7 +8910,8 @@ my_rl_completion(const char *text, int start, int end)
 		 * to atoi */
 		if (*text >= 0x31 && *text <= 0x39) {
 			int num_text = atoi(text);
-			if (is_number(text) && num_text > 0 && num_text <= (int)files)
+			if (is_number(text) && num_text > 0
+			&& num_text <= (int)files)
 					matches = rl_completion_matches(text,
 							  &filenames_generator);
 		}
@@ -9153,21 +9233,51 @@ init_config(void)
 	if (home_ok) {
 		/* Set up program's directories and files (always per user) */
 
+		/* If $XDG_CONFIG_HOME is set, use it for the config file.
+		 * Else, fall back to $HOME/.config */
+		char *xdg_config_home = getenv("XDG_CONFIG_HOME");
+
 		/* alt_profile will not be NULL whenever the -P option is used
 		 * to run the program under an alternative profile */
 		if (alt_profile) {
-			CONFIG_DIR = (char *)xcalloc(user_home_len + pnl_len + 10 
-									+ strlen(alt_profile) + 1,
-									sizeof(char));
-			sprintf(CONFIG_DIR, "%s/.config/%s/%s", user_home, PNL, 
-					alt_profile);
+			
+			if (xdg_config_home) {
+				CONFIG_DIR = (char *)xcalloc(strlen(xdg_config_home)
+									 + pnl_len + strlen(alt_profile)
+									 + 3, sizeof(char));
+				sprintf(CONFIG_DIR, "%s/%s/%s", xdg_config_home, PNL, 
+						alt_profile);
+			}
+
+			else {
+				CONFIG_DIR = (char *)xcalloc(user_home_len + pnl_len
+										+ 11 + strlen(alt_profile),
+										sizeof(char));
+				sprintf(CONFIG_DIR, "%s/.config/%s/%s", user_home, PNL, 
+						alt_profile);
+			}
 		}
+
+		/* Use the default profile */
 		else {
-			CONFIG_DIR = (char *)xcalloc(user_home_len + pnl_len + 17
-										 + 1, sizeof(char));
-			sprintf(CONFIG_DIR, "%s/.config/%s/default", user_home,
-					PNL);
+
+			if (xdg_config_home) {
+				CONFIG_DIR = (char *)xcalloc(strlen(xdg_config_home)
+									 + pnl_len + 10, sizeof(char));
+				sprintf(CONFIG_DIR, "%s/%s/default", xdg_config_home,
+						PNL, alt_profile);
+			}
+
+			else {
+				CONFIG_DIR = (char *)xcalloc(user_home_len + pnl_len
+											 + 18, sizeof(char));
+				sprintf(CONFIG_DIR, "%s/.config/%s/default", user_home,
+						PNL);
+			}
 		}
+
+		xdg_config_home = (char *)NULL;
+		
 		TRASH_DIR = (char *)xcalloc(user_home_len + 20, sizeof(char));
 		sprintf(TRASH_DIR, "%s/.local/share/Trash", user_home);
 		size_t trash_len = strlen(TRASH_DIR);
@@ -9399,6 +9509,28 @@ init_config(void)
 							tips = 0;
 						else /* True and default */
 							tips = 1;
+					}
+
+					else if (strncmp(line, "Autocd=", 7) == 0) {
+						char opt_str[MAX_BOOL] = "";
+						ret = sscanf(line, "Autocd=%5s\n", opt_str);
+						if (ret == -1)
+							continue;
+						if (strncmp(opt_str, "false", 5) == 0)
+							autocd = 0;
+						else /* True and default */
+							autocd = 1;
+					}
+
+					else if (strncmp(line, "AutoOpen=", 9) == 0) {
+						char opt_str[MAX_BOOL] = "";
+						ret = sscanf(line, "AutoOpen=%5s\n", opt_str);
+						if (ret == -1)
+							continue;
+						if (strncmp(opt_str, "false", 5) == 0)
+							auto_open = 0;
+						else /* True and default */
+							auto_open = 1;
 					}
 
 					else if (strncmp(line, "DirIndicator=", 13) == 0) {
@@ -9906,6 +10038,8 @@ init_config(void)
 			 * via the config file, or if this latter could not be read
 			 * for any reason, set the defaults */
 			/* -1 means not set */
+			if (auto_open == -1) auto_open = 1;
+			if (autocd == -1) autocd = 1;
 			if (light_mode == -1) light_mode = 0;
 			if (dir_indicator == -1) dir_indicator = 1;
 			if (classify == -1) classify = 0;
@@ -10934,17 +11068,22 @@ parse_input_str(char *str)
 				 * #   2.c) ELN EXPANSION   # 
 				 * ##########################*/
 
-		/* i must be bigger than zero because the first string in
-		 * comm_array, the command name, should NOT be expanded, but only
-		 * arguments. Otherwise, if the expanded ELN happens to be a
-		 * program name as well, this program will be executed, and this,
-		 * for sure, is to be avoided */
+		/* If autocd is set to false, i must be bigger than zero because
+		 * the first string in comm_array, the command name, should NOT
+		 * be expanded, but only arguments. Otherwise, if the expanded
+		 * ELN happens to be a program name as well, this program will
+		 * be executed, and this, for sure, is to be avoided */
 
 		/* The 'sort' command take digits as arguments. So, do not expand
 		 * ELN's in this case */
 		if (strcmp(substr[0], "st") != 0
 		&& strcmp(substr[0], "sort") != 0) {
-			if (i > 0 && is_number(substr[i])) {
+			if (is_number(substr[i])) {
+
+				/* Expand first word only if autocd is set to true */
+				if (i == 0 && !autocd && !auto_open)
+					continue;
+				
 				int num = atoi(substr[i]);
 				/* Expand numbers only if there is a corresponding ELN */
 
@@ -11424,8 +11563,7 @@ prompt(void)
 	if (tips) {
 		static int first_run = 1;
 		if (first_run) {
-			srand(time(NULL));
-			printf("%sTIP%s: %s\n", bold, NC, TIPS[rand() % tipsn]);
+			print_tips(0);
 			first_run = 0;
 		}
 	}
@@ -11926,7 +12064,7 @@ list_dir(void)
 		break;
 
 		case 7:
-		#if __FreeBSD__
+		#if __FreeBSD__ || _BE_POSIX
 			total = scandir(path, &list, skip_implied_dot, m_alphasort);
 		#else
 			total = scandir(path, &list, skip_implied_dot, m_versionsort);
@@ -11946,7 +12084,13 @@ list_dir(void)
 	/* Struct to store information about each file, so that we don't
 	 * need to run stat() and strlen() again later, perhaps hundreds
 	 * of times */
-	struct fileinfo *file_info = (struct fileinfo *)xnmalloc(
+/*	struct fileinfo *file_info = (struct fileinfo *)xnmalloc(
+					(size_t)total + 1, sizeof(struct fileinfo)); */
+
+	if (file_info)
+		free(file_info);
+
+	file_info = (struct fileinfo *)xnmalloc(
 					(size_t)total + 1, sizeof(struct fileinfo));
 
 	if (list_folders_first) {
@@ -12063,6 +12207,7 @@ list_dir(void)
 		file_info[i].exists = 1;
 		file_info[i].type = file_attrib.st_mode;
 		file_info[i].size = file_attrib.st_size;
+		file_info[i].linkdir = -1;
 
 		/* file_name_width contains: ELN's amount of digits + one space 
 		 * between ELN and filename + filename length. Ex: '12 name'
@@ -12084,7 +12229,6 @@ list_dir(void)
 		case S_IFLNK:
 			{
 			char *linkname = (char *)NULL;
-			int link_to_dir = -1;
 
 			/* In case of symlink, check if it points to a directory */
 			if ((file_info[i].type & S_IFMT) == S_IFLNK) {
@@ -12098,20 +12242,20 @@ list_dir(void)
 					if ((link_attrib.st_mode & S_IFMT) != S_IFDIR) {
 						free(linkname);
 						linkname = (char *)NULL;
-						link_to_dir = 0;
+						file_info[i].linkdir = 0;
 					}
 					else /* We have a symlink to a valid directory */
-						link_to_dir = 1;
+						file_info[i].linkdir = 1;
 				}
 				else {
-					link_to_dir = 0;
+					file_info[i].linkdir = 0;
 					file_info[i].brokenlink = 1;
 				}
 			}
 
 			/* If dir counter is disabled and/or the file is a symlink
 			 * to a non-directory */
-			if (!files_counter || link_to_dir == 0) {
+			if (!files_counter || file_info[i].linkdir == 0) {
 				/* All dirs will be printed as having read access and
 				 * being not empty, no matter if they are empty or not or
 				 * if the user has read access or not. Disabling the
@@ -12120,7 +12264,7 @@ list_dir(void)
 				 * the listing process could become really slow */
 				file_info[i].ruser = 1;
 
-				if (link_to_dir == 0)
+				if (file_info[i].linkdir == 0)
 					file_info[i].filesn = 0;
 				else
 					file_info[i].filesn = 3;
@@ -12481,7 +12625,7 @@ list_dir(void)
 		}
 	}
 	
-	free(file_info);
+/*	free(file_info); */
 	
 	/* If the pager was disabled during listing (by pressing 'c', 'p' or
 	 * 'q'), reenable it */
@@ -12577,7 +12721,7 @@ list_dir_light(void)
 		break;
 
 		case 7:
-		# if __FreeBSD__
+		# if __FreeBSD__ || _BE_POSIX
 			total = scandir(path, &list, skip_implied_dot, m_alphasort);
 		#else
 			total = scandir(path, &list, skip_implied_dot, m_versionsort);
@@ -12594,7 +12738,10 @@ list_dir_light(void)
 			return EXIT_FAILURE;
 	}
 
-	struct fileinfo *file_info = (struct fileinfo *)xnmalloc(
+	if (file_info)
+		free(file_info);
+
+	file_info = (struct fileinfo *)xnmalloc(
 					(size_t)total + 1, sizeof(struct fileinfo));
 
 	files = (size_t)total;
@@ -12693,6 +12840,8 @@ list_dir_light(void)
 	longest = 0; /* Global */
 
 	for (i = (int)files; i--;) {
+
+		file_info[i].linkdir = -1;
 
 		size_t file_name_width = digits_in_num(i + 1) + 1
 								 + file_info[i].len;
@@ -12986,7 +13135,7 @@ list_dir_light(void)
 		}
 	}
 
-	free(file_info);
+/*	free(file_info); */
 	
 	/* If the pager was disabled during listing (by pressing 'c', 'p' or
 	 * 'q'), reenable it */
@@ -13252,6 +13401,55 @@ exec_cmd(char **comm)
 			return EXIT_FAILURE;
 		}
 	}
+
+				/* #### AUTOCD & AUTOOPEN #### */
+
+	/* Only autocd or autoopen if there is no second argument of if
+	 * second argument is "&" */
+	if ((autocd || auto_open) && (!comm[1] || (*comm[1] == '&')
+	&& comm[1][1] == '\0')) {
+
+		char *tmp = comm[0];
+		size_t i, tmp_len = strlen(tmp);
+
+		if (tmp[tmp_len - 1] == '/')
+			tmp[tmp_len - 1] = 0x00;
+
+		for (i = files; i--;) {
+
+			if (*tmp != *dirlist[i])
+				continue;
+
+			if (strcmp(tmp, dirlist[i]) != 0)
+				continue;
+
+			/* In light mode, stat() is never called, so that we
+			 * don't have the stat macros (S_IFDIR and company), but
+			 * only those provided by scandir (DT_DIR and company) */
+			if (autocd && (((light_mode) ? file_info[i].type
+			: file_info[i].type & S_IFMT) == ((light_mode)
+			? DT_DIR : S_IFDIR) || file_info[i].linkdir == 1)) {
+				exit_code = cd_function(tmp);
+				return exit_code;
+			}
+
+			else if (auto_open && (((light_mode) ? file_info[i].type
+			: file_info[i].type & S_IFMT) == ((light_mode)
+			? DT_REG : S_IFREG) || ((light_mode) ? file_info[i].type
+			: file_info[i].type & S_IFMT) == ((light_mode)
+			? DT_LNK : S_IFLNK))) {
+				char *cmd[] = { "open", comm[0],
+								(comm[1]) ? comm[1] : NULL,
+								NULL }; 
+				exit_code = open_function(cmd);
+				return exit_code;
+			}
+
+			else
+				break;
+		}
+	}
+
 
 	/* The more often a function is used, the more on top should it be
 	 * in this if...else..if chain. It will be found faster this way. */
@@ -13563,12 +13761,8 @@ exec_cmd(char **comm)
 	}
 
 					/* #### TIPS #### */
-	else if (strcmp(comm[0], "tips") == 0) {
-		size_t i;
-		for (i = 0; i < tipsn; i++)
-			printf("%sTIP %d%s: %s\n", bold, i, NC, TIPS[i]);
-		return EXIT_SUCCESS;
-	}
+	else if (strcmp(comm[0], "tips") == 0)
+		print_tips(1);
 
 					/* #### LIGHT MODE #### */
 	else if (strcmp(comm[0], "lm") == 0) {
@@ -13933,7 +14127,7 @@ exec_cmd(char **comm)
 	else if (strcmp(comm[0], "hf") == 0 
 	|| strcmp(comm[0], "hidden") == 0) {
 		if (!comm[1]) {
-			puts(_("Usage: hidden, hf [on, off, status]")); 
+			fputs(_("Usage: hidden, hf [on, off, status]\n"), stderr); 
 			exit_code = EXIT_FAILURE;
 			return EXIT_FAILURE;
 		}
@@ -13947,6 +14141,73 @@ exec_cmd(char **comm)
 			exit_code = hidden_function(comm);
 	}
 
+					/* #### AUTOCD #### */
+	else if (strcmp(comm[0], "acd") == 0
+	|| strcmp(comm[0], "autocd") == 0) {
+
+		if (!comm[1]) {
+			fputs("Usage: acd, autocd [on, off, status]\n", stderr);
+			exit_code = EXIT_FAILURE;
+			return EXIT_FAILURE;
+		}
+
+		if (strcmp(comm[1], "on") == 0) {
+			autocd = 1;
+			printf("%s: autocd is enabled\n", PROGRAM_NAME);
+		}
+		else if (strcmp(comm[1], "off") == 0) {
+			autocd = 0;
+			printf("%s: autocd is disabled\n", PROGRAM_NAME);
+		}
+		else if (strcmp(comm[1], "status") == 0) {
+			if (autocd)
+				printf("%s: autocd is enabled\n", PROGRAM_NAME);
+			else
+				printf("%s: autocd is disabled\n", PROGRAM_NAME);
+		}
+		else if (strcmp(comm[1], "--help") == 0)
+			puts("Usage: acd, autocd [on, off, status]");
+		else {
+			fputs("Usage: acd, autocd [on, off, status]\n", stderr);
+			exit_code = EXIT_FAILURE;
+			return EXIT_FAILURE;
+		}
+	}
+
+					/* #### AUTOOPEN #### */
+	else if (strcmp(comm[0], "ao") == 0
+	|| strcmp(comm[0], "autoopen") == 0) {
+
+		if (!comm[1]) {
+			fputs("Usage: ao, autoopen [on, off, status]\n", stderr);
+			exit_code = EXIT_FAILURE;
+			return EXIT_FAILURE;
+		}
+
+		if (strcmp(comm[1], "on") == 0) {
+			auto_open = 1;
+			printf("%s: autoopen is enabled\n", PROGRAM_NAME);
+		}
+		else if (strcmp(comm[1], "off") == 0) {
+			auto_open = 0;
+			printf("%s: autoopen is disabled\n", PROGRAM_NAME);
+		}
+		else if (strcmp(comm[1], "status") == 0) {
+			if (auto_open)
+				printf("%s: autoopen is enabled\n", PROGRAM_NAME);
+			else
+				printf("%s: autoopen is disabled\n", PROGRAM_NAME);
+		}
+		else if (strcmp(comm[1], "--help") == 0)
+			puts("Usage: ao, autoopen [on, off, status]");
+		else {
+			fputs("Usage: ao, autoopen [on, off, status]\n", stderr);
+			exit_code = EXIT_FAILURE;
+			return EXIT_FAILURE;
+		}
+	}
+
+					/* #### COMMANDS #### */
 	else if (strcmp(comm[0], "cmd") == 0
 	|| strcmp(comm[0], "commands") == 0) 
 		exit_code = list_commands();
@@ -13988,7 +14249,7 @@ exec_cmd(char **comm)
 			free(comm[i]);
 		free(comm);
 
-		exit(EXIT_SUCCESS);
+		exit(exit_code);
 	}
 
 
@@ -13997,11 +14258,18 @@ exec_cmd(char **comm)
 	 * ####################################################*/
 
 	else {
+
 		/* IF NOT A COMMAND, BUT A DIRECTORY... */
 		if (*comm[0] == '/') {
 			struct stat file_attrib;
 			if (lstat(comm[0], &file_attrib) == 0) {
 				if ((file_attrib.st_mode & S_IFMT) == S_IFDIR ) {
+
+					if (autocd) {
+						exit_code = cd_function(comm[0]);
+						return exit_code;
+					}
+
 					fprintf(stderr, _("%s: '%s': Is a directory\n"), 
 							PROGRAM_NAME, comm[0]);
 					exit_code = EXIT_FAILURE;
@@ -17595,6 +17863,8 @@ be: 0 = none, 1 = name, 2 = size, 3 = atime, \
  lm [on, off]\n\
  rf, refresh\n\
  cc, colors\n\
+ acd, autocd [on, off, status]\n\
+ ao, autoopen [on, off, status]\n\
  hf, hidden [on, off, status]\n\
  ff, folders first [on, off, status]\n\
  fc, filescounter [on, off, status]\n\
@@ -17613,10 +17883,10 @@ be: 0 = none, 1 = name, 2 = size, 3 = atime, \
  A-f:	Toggle list-folders-first on/off\n\
  C-r:	Refresh the screen\n\
  A-l:	Toggle long view mode on/off\n\
- A-m:	List mountpoints\n\
+ A-m:	Open the mountpoints screen\n\
  A-b:	Launch the Bookmarks Manager\n\
  A-i:	Toggle hidden files on/off\n\
- A-s:	Open the Selection Box\n\
+ A-s:	Print currently selected files\n\
  A-a:	Select all files in the current working directory\n\
  A-d:	Deselect all selected files\n\
  A-r:	Change to the root directory\n\
@@ -17718,83 +17988,35 @@ splash(void)
 }
 
 void
-bonus_function (void)
+bonus_function(void)
 {
-	static short state = 0;
+	char *phrases[] = {
+		"\"Vamos Boca Juniors Carajo!\" (La mitad + 1)",
+		"\"Hey! Look behind you! A three-headed monkey! (G. Threepweed)",
+		"\"Free as in free speech, not as in free beer\" (R. M. S)",
+		"\"Nothing great has been made in the world without passion\" (G. W. F. Hegel)",
+		"\"Simplicity is the ultimate sophistication (Leo Da Vinci)",
+		"\"Yo vendí semillas de alambre de púa, al contado, y me lo agradecieron\" (Marquitos, 9 Reinas)",
+		"\"I'm so happy, because today I've found my friends, they're in my head\" (K. D. Cobain)",
+		"\"The best code is written with the delete key (Someone, somewhere, sometime)",
+		"\"I'm selling these fine leather jackets (Indy)",
+		"\"I pray to God to make me free of God\" (Meister Eckhart)",
+		"¡Truco y quiero retruco mierda!",
+		"The only truth is that there is no truth",
+		"\"This is a lie\" (The liar paradox)",
+		"\"There are two ways to write error-free programs; only the third one works\" (Alan J. Perlis)",
+		"The man who sold the world was later sold by the big G",
+		"A programmer is always one year older than herself",
+		"A smartphone is anything but smart",
+		"And he did it: he killed the one who killed him",
+		">++('>",
+		":(){:|:&};:",
+		"Keep it simple, stupid",
+		NULL
+		};
 
-	if (state > 14)
-		state = 0;
+	size_t num = (sizeof(phrases) / sizeof(phrases[0])) - 1;
 
-	switch (state) {
-	case 0:
-		puts("\"Vamos Boca Juniors Carajo!\" (La mitad + 1)");
-		break;
-
-	case 1:
-		puts("\"Hey! Look behind you! A three-headed monkey!\" "
-			 "(G. Threepweed)");
-		break;
-
-	case 2:
-		puts("\"Free as in free speech, not as in free beer\" (R. M. S)");
-		break;
-
-	case 3:
-		puts("\"Nothing great has been made in the world without "
-			 "passion\" (G. W. F. Hegel)");
-		break;
-
-	case 4:
-		puts("\"Simplicity is the ultimate sophistication\" "
-			 "(Leo Da Vinci)");
-		break;
-
-	case 5:
-		puts("\"Yo vendí semillas de alambre de púa, al contado, y "
-			 "me lo agradecieron\" (Marquitos, 9 Reinas)");
-		break;
-
-	case 6:
-		puts("\"I'm so happy, because today I've found my friends, "
-			 "they're in my head\" (K. D. Cobain)");
-		break;
-
-	case 7:
-		puts("\"The best code is written with the delete key\" "
-			 "(Someone, somewhere, sometime)");
-		break;
-
-	case 8:
-		puts("\"I'm selling these fine leather jackets\" (Indy)");
-		break;
-
-	case 9:
-		puts("\"I pray to God to make me free of God\" (Meister Eckhart)");
-		break;
-
-	case 10:
-		puts("¡Truco y quiero retruco mierda!");
-		break;
-
-	case 11:
-		puts("The only truth is that there is no truth");
-		break;
-
-	case 12:
-		puts("\"This is a lie\" (The liar paradox)");
-		break;
-
-	case 13:
-		puts("\"There are two ways to write error-free programs; only the "
-			 "third one works\" (Alan J. Perlis)");
-		break;
-
-	case 14:
-		puts("The man who sold the world was later sold by the big G");
-		break;
-
-	default: break;
-	}
-
-	state++;
+	srand(time(NULL));
+	printf("%s\n", phrases[rand() % num]);
 }
