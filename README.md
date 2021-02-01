@@ -7,14 +7,6 @@
 [![clifm-git](https://img.shields.io/aur/version/clifm-git?color=1793d1&label=clifm-git&logo=arch-linux&style=for-the-badge)](https://aur.archlinux.org/packages/clifm/)
 [![License](https://img.shields.io/github/license/leo-arch/clifm?color=333333&style=for-the-badge)](https://github.com/leo-arch/clifm/blob/master/LICENSE)
 
-## Version notes
-
-0.18.0. This is the first POSIX-2008 compliant and FreeBSD compatible version.
-
-Version 0.17.2 is the first one to work on ARM machines.
-
-Since version 0.16.0 a lot (really, a lot) of bug fixes and some new features were added: a trash system (freedesktop compliant), keyboard shorcuts (very handy), a little messages system to keep track of important messages and errors, "sel" keyword and ranges auto-expansion, ELN expansion with the TAB key, including a Bash-like quoting system (absolutely great), colors customization, and commands sequential and conditional execution (very useful). Consult the manpage for more information). I also added support for translations (using `gettext`).
-
 ## Rationale
 
 Why in this world do we need another file manager? In the first place, just because I can do it, write it, and learn (a lot) in the process, just because this is a free world, and very specially, a free community; and, needless to say, alternatives are at the heart of freedom. Secondly, because I'm sure I'm not the only person in this world looking for a non-bloated, KISS file manager: it just does whatever needs to be done using as little resources as possible. No GUI, no curses, but just a command line file manager: 5MiB of RAM and 250KiB of disk space is all you need. Finally, because it is certainly a file manager, but also a shell extension. Almost everything you do on your shell can be done in this file manager as well: search for files, copy, rename, and trash some of them, but, at the same time, update/upgrade your system, add some cronjob, stop a service, and run nano (or Vi if you like).
@@ -29,7 +21,7 @@ CliFM is a completely command-line-based, shell-like file manager able to perfor
 
 * With a memory footprint below 5 MiB and a disk usage of 0.25 MiB, it is incredibly **lightweight and fast**, and as such, able to run on really old hardware. It is probabily the most lightweight and fastest file manager out there.
 
-* The use of **short (and even one-character) commands**, and list numbers (**ELN's**) for filenames. For example, instead of typing: `cp file1 file2 file3 file4 dir/`, you can do this: `c 1-4 7`. Shorter and quicker. If the auto-cd and auto-open functions are enabled, which is the default, you can change to directories or open files by just entering the corresponding ELN. So, instead of `cd 12` or `o 12` you can just enter `12`; even more shroter and quicker. As a plus, ELN's can also be used with external commands. Example: `diff 1 5` or `ls -l 12 14`. If numbers are a bit tricky to you, as they are to me, you can use the TAB key to expand the ELN to the corresponding filename. So, type `r 56`, then TAB, and it becomes `r filename`.
+* The use of **short (and even one-character) commands**, and list numbers (**ELN's**) for filenames. For example, instead of typing: `cp file1 file2 file3 file4 dir/`, you can do this: `c 1-4 7`. Shorter and quicker. If the auto-cd and auto-open functions are enabled, which is the default, you can change to directories or open files by just entering the corresponding ELN. So, instead of `cd 12` or `o 12` you can just enter `12`; even shorter and quicker. As a plus, ELN's can also be used with external commands. Example: `diff 1 5` or `ls -l 12 14`. If numbers are a bit tricky to you, as they are to me, you can use the TAB key to expand the ELN to the corresponding filename. So, type `r 56`, then TAB, and it becomes `r filename`.
 
 * **Bookmarks**: With CLiFM bookmarks function, accessing your preferred files and/or directories be as easy as this: `bm` (or `Alt-b`), to call the bookmarks function, and then `1` (or whatever is the number corresponding to your bookmark).
 
@@ -77,7 +69,7 @@ Because file manager, but also half-shell, CLiFM als provides the following feat
 * Resource opener
 * Multiple sorting methods: name, size, atime, btime, ctime, mtime, and version. Also supports reverse sorting.
 * Bulk rename
-* Archives and compression support (including Zstandard)
+* Archives and compression support (including Zstandard and ISO 9660)
 * Auto-cd and auto-open
 
 Finally, all CLiFM options could be handled directly via command line, by passing parameters to the program, or via plain
@@ -89,7 +81,7 @@ On Arch's notion of simplcity see: https://wiki.archlinux.org/index.php/Arch_Lin
 
 ## Dependencies:
 
-`glibc`, `ncurses`, `libcap`, `readline`, `coreutils` (providing basic programs such as rm, cp, mkdir, etc). For archers: All these dependenciess are part of the `core` repo, and `glibc` is also part of the `base` metapackage. In Debian systems two packages must be installed before compilation: `libcap-dev` and `libreadline-dev`. In Fedora based systems you need `libcap-devel` and `readline-devel`. Optional dependencies: `file`, `atool`, and `archivemount`.
+`glibc` and `coreutils`, of course, but also `libcap`, `acl`, `file`, and `readline`. For archers: All these dependenciess are part of the `core` reposiroty. In Debian systems two packages must be installed before compilation: `libcap-dev` and `libreadline-dev`. In Fedora based systems you need `libcap-devel` and `readline-devel`. Optional dependencies: `sshfs`, `curlftpfs`, and `cifs-utils` (for remote filesystems support), and `atool`, `archivemount`, `genisoimage`, `p7zip`, and `cdrtools` (for archiving and compression support).
 
 ## Compiling and Running CliFM:
 
@@ -132,7 +124,7 @@ To uninstall `clifm` issue this command wherever the Makefile is located:
 
 	$ gcc -O3 -march=native -fstack-protector-strong -s -o clifm clifm.c -lcap -lreadline -lacl
 
-To enable POSIX compliance, pass this option to the compiler: `-D_BE_POSIX.` The only feature disabled in this way is files birth time, only available on Linux via statx(), which is Linux-specific and thereby not POSIX compliant.
+To enable POSIX compliance, pass this option to the compiler: `-D_BE_POSIX.` The only two features disabled in this way are: a) files birth time, only available on Linux via **statx(2)**, which is Linux-specific, and **strverscmp(3)**, a GNU extension used to sort files by version.
 
 ##### On FreeBSD:
 
@@ -152,6 +144,10 @@ Do not forget to install the manpage as well (the full help is in here):
 	$ sudo gzip /usr/share/man/man1/clifm.1
 
 Then you can access the manpage as always: `man clifm`
+
+## Support
+
+ClifM is C99 and POSIX-1.2008 compliant (if compiled with the `_BE_POSIX` flag). It works on Linux and FreeBSD, on i686, x86_64, and ARM architectures.
 
 ## First steps
 

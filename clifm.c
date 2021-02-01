@@ -153,7 +153,7 @@ in FreeBSD, but is deprecated */
 //#define CLEAR write(STDOUT_FILENO, "\033c", 3);
 #define CLEAR write(STDOUT_FILENO, "\x1b[2J\x1b[3J\x1b[H", 11);
 /* #define CLEAR write(STDOUT_FILENO, "\033[2J\033[H", 7); */
-#define VERSION "0.27.2"
+#define VERSION "0.27.3"
 #define AUTHOR "L. Abramovich"
 #define CONTACT "johndoe.arch@outlook.com"
 #define WEBSITE "https://github.com/leo-arch/clifm"
@@ -396,7 +396,10 @@ int mtime_sort(const struct dirent **a, const struct dirent **b);
 int bulk_rename(char **args);
 int archiver(char **args, char mode);
 int zstandard(char *in_file, char *out_file, char mode, char op);
-int is_compressed(char *file);
+int is_compressed(char *file, int check_iso);
+int check_iso(char *file);
+int handle_iso(char *file);
+int create_iso(char *file, char *out_file);
 
 /* Still under development */
 int remote_ssh(char *address, char *options);
@@ -545,7 +548,7 @@ const char *INTERNAL_CMDS[] = { "alias", "open", "prop", "back", "forth",
 		"exit", "quit", "pager", "trash", "undel", "messages", 
 		"mountpoints", "bookmarks", "log", "untrash", "unicode", 
 		"profile", "shell", "mime", "sort", "tips", "autocd",
-		"autoopen", NULL };
+		"auto-open", NULL };
 
 #define DEFAULT_PROMPT "\\A \\u:\\H \\[\\e[00;36m\\]\\w\\n\\[\\e[0m\\]\
 \\z\\[\\e[0;34m\\] \\$\\[\\e[0m\\] "
@@ -630,10 +633,10 @@ main(int argc, char **argv)
 
 	/* What about unices like BSD, Android and even MacOS? 
 	* unix || __unix || __unix__
-	* __FreeBSD___, __NetBSD__, __OpenBSD__, __bdsi__, __DragonFly__
+	* __NetBSD__, __OpenBSD__, __bdsi__, __DragonFly__
 	* __APPLE__ && __MACH__
 	* sun || __sun
-	* __ANDROID__ 
+	* __ANDROID__
 	* __CYGWIN__
 	* MSDOS, _MSDOS, __MSDOS__, __DOS__, _WIN16, _WIN32, _WIN64 */
 
@@ -1000,24 +1003,369 @@ main(int argc, char **argv)
 			 * #     FUNCTIONS DEFINITIONS     #
 			 * ################################# */
 
+int
+create_iso(char *in_file, char *out_file)
+{
+	int exit_status = EXIT_SUCCESS;
+	struct stat file_attrib;
+
+	if (lstat(in_file, &file_attrib) == -1) {
+		fprintf(stderr, "archiver: '%s': %s\n", in_file,
+				strerror(errno));
+		return EXIT_FAILURE;
+	}
+
+	/* If IN_FILE is a directory */
+	if ((file_attrib.st_mode & S_IFMT) == S_IFDIR) {
+		char *cmd[] = { "mkisofs", "-R", "-o", out_file, in_file,
+						NULL };
+
+		if (launch_execve(cmd, FOREGROUND) != EXIT_SUCCESS)
+			exit_status = EXIT_FAILURE;
+	}
+
+	/* If IN_FILE is a block device */
+	else if ((file_attrib.st_mode & S_IFMT) == S_IFBLK) {
+
+		char *if_option = (char *)xnmalloc(strlen(in_file) + 4,
+										   sizeof(char));
+		sprintf(if_option, "if=%s", in_file);
+
+		char *of_option = (char *)xnmalloc(strlen(out_file) + 4,
+										   sizeof(char));
+		sprintf(of_option, "of=%s", out_file);
+
+		char *cmd[] = { "sudo", "dd", if_option, of_option, "bs=64k",
+ 						"conv=noerror,sync", "status=progress",
+ 						NULL };
+
+		if (launch_execve(cmd, FOREGROUND) != EXIT_SUCCESS)
+			exit_status = EXIT_FAILURE;
+
+		free(if_option);
+		free(of_option);
+	}
+
+	else {
+		fprintf(stderr, "archiver: '%s': Invalid file format\nFile "
+				"should be either a directory or a block device\n",
+				in_file);
+		return EXIT_FAILURE;
+	}
+
+	return exit_status;
+}
+
+int
+handle_iso(char *file)
+{
+	int exit_status = EXIT_SUCCESS;
+
+	/* Use 7z to
+	 * list (l)
+	 * extract (e)
+	 * extrat to dir (x -oDIR FILE)
+	 * test (t) */
+
+	printf(_("%s[e]%sxtract %s[E]%sxtract-to-dir %s[l]%sist "
+		  "%s[t]%stest %s[m]%sount %s[q]%suit\n"), bold, NC, bold,
+		  NC, bold, NC, bold, NC, bold, NC, bold, NC);
+
+	char *operation = (char *)NULL;
+	char sel_op = 0;
+
+	while (!operation) {
+		operation = rl_no_hist(_("Operation: "));
+
+		if (!operation)
+			continue;
+
+		if (operation && (!operation[0] || operation[1] != '\0')) {
+			free(operation);
+			operation = (char *)NULL;
+			continue;
+		}
+
+		switch(*operation) {
+			case 'e':
+			case 'E':
+			case 'l':
+			case 'm':
+			case 't':
+				sel_op = *operation;
+				free(operation);
+			break;
+
+			case 'q':
+				free(operation);
+				return EXIT_SUCCESS;
+
+			default:
+				free(operation);
+				operation = (char *)NULL;
+			break;
+		}
+
+		if (sel_op)
+			break;
+	}
+
+	char *ret = strchr(file, '\\');
+	if (ret) {
+		char *deq_file = dequote_str(file, 0);
+		if (deq_file) {
+			strcpy(file, deq_file);
+			free(deq_file);
+		}
+		ret = (char *)NULL;
+	}
+
+	switch(sel_op) {
+
+		/* ########## EXTRACT #######*/
+		case 'e': {
+			/* 7z x -oDIR FILE (use FILE as DIR) */
+			char *o_option = (char *)xnmalloc(strlen(file) + 7,
+										sizeof(char));
+			sprintf(o_option, "-o%s.dir", file); 
+
+			/* Construct and execute cmd */
+			char *cmd[] = { "7z", "x", o_option, file, NULL };
+			if (launch_execve(cmd, FOREGROUND) != EXIT_SUCCESS)
+				exit_status = EXIT_FAILURE;
+
+			free(o_option);
+		}
+		break;
+
+		/* ########## EXTRACT TO DIR ####### */
+		case 'E': {
+			/* 7z x -oDIR FILE (ask for DIR) */
+			char *ext_path = (char *)NULL;
+
+			while (!ext_path) {
+				ext_path = rl_no_hist(_("Extraction path: "));
+
+				if (!ext_path)
+					continue;
+
+				if (ext_path && !*ext_path) {
+					free(ext_path);
+					ext_path = (char *)NULL;
+					continue;
+				}
+			}
+
+			char *o_option = (char *)xnmalloc(strlen(ext_path) + 3,
+										sizeof(char));
+			sprintf(o_option, "-o%s", ext_path); 
+
+			/* Construct and execute cmd */
+			char *cmd[] = { "7z", "x", o_option, file, NULL };
+
+			if (launch_execve(cmd, FOREGROUND) != EXIT_SUCCESS)
+				exit_status = EXIT_FAILURE;
+
+			free(ext_path);
+			free(o_option);
+			ext_path = (char *)NULL;
+		}
+		break;
+
+		/* ########## LIST ####### */
+		case 'l': {
+			/* 7z l FILE */
+			char *cmd[] = { "7z", "l", file, NULL };
+
+			if (launch_execve(cmd, FOREGROUND) != EXIT_SUCCESS)
+				exit_status = EXIT_FAILURE;
+			}
+		break;
+		
+		/* ########## MOUNT ####### */
+
+		case 'm': {
+			/* Create mountpoint */
+			char *mountpoint = (char *)NULL;
+			mountpoint = (char *)xnmalloc(strlen(CONFIG_DIR)
+										  + strlen(file) + 9,
+										  sizeof(char));
+
+			sprintf(mountpoint, "%s/mounts/%s", CONFIG_DIR, file);
+
+			char *dir_cmd[] = { "mkdir", "-pm700", mountpoint, NULL };
+
+			if (launch_execve(dir_cmd, FOREGROUND) != EXIT_SUCCESS) {
+				free(mountpoint);
+				return EXIT_FAILURE;
+			}
+
+			/* Construct and execute cmd */
+			char *cmd[] = { "sudo", "mount", "-o", "loop", file,
+							mountpoint, NULL };
+
+			if (launch_execve(cmd, FOREGROUND) != EXIT_SUCCESS) {
+				free(mountpoint);
+				return EXIT_FAILURE;
+			}
+
+			/* List content of mountpoint */
+			if (chdir(mountpoint) == -1) {
+				fprintf(stderr, "archiver: %s: %s\n", mountpoint,
+						strerror(errno));
+				free(mountpoint);
+				return EXIT_FAILURE;
+			}
+
+			free(path);
+			path = (char *)xcalloc(strlen(mountpoint) + 1,
+								   sizeof(char));
+			strcpy(path, mountpoint);
+
+			if (cd_lists_on_the_fly) {
+				while(files--)
+					free(dirlist[files]);
+				if (list_dir() != EXIT_SUCCESS)
+					exit_status = EXIT_FAILURE;
+				add_to_dirhist(path);
+			}
+			else
+				printf("%s: Successfully mounted on %s\n", file,
+					   mountpoint);
+
+			free(mountpoint);
+		}
+		break;
+
+		/* ########## TEST #######*/
+		case 't': {
+			/* 7z t FILE */
+			char *cmd[] = { "7z", "t", file, NULL };
+
+			if (launch_execve(cmd, FOREGROUND) != EXIT_SUCCESS)
+				exit_status = EXIT_FAILURE;
+			}
+		break;
+	}
+
+	return exit_status;
+}
+
+int
+check_iso(char *file)
+/* Run the 'file' command on FILE and look for "ISO 9660" and
+ * string in its output. Returns zero if found, one if not, and -1
+ * in case of error */
+{
+	if (!file || !*file) {
+		fputs(_("Error opening temporary file\n"), stderr);
+		return -1;
+	}
+	
+	char ISO_TMP_FILE[PATH_MAX] = "";
+	sprintf(ISO_TMP_FILE, "%s/archiver_tmp", TMP_DIR);
+
+	if (access(ISO_TMP_FILE, F_OK) == 0)
+		remove(ISO_TMP_FILE);
+	
+	FILE *file_fp = fopen(ISO_TMP_FILE, "w");
+
+	if (!file_fp) {
+		fprintf(stderr, "%s: '%s': %s\n", PROGRAM_NAME,
+				ISO_TMP_FILE, strerror(errno));
+		return -1;
+	}
+
+	FILE *file_fp_err = fopen("/dev/null", "w");
+
+	if (!file_fp_err) {
+		fprintf(stderr, "%s: '/dev/null': %s\n", PROGRAM_NAME,
+				strerror(errno));
+		fclose(file_fp);
+		return -1;
+	}
+
+	int stdout_bk = dup(STDOUT_FILENO); /* Store original stdout */
+	int stderr_bk = dup(STDERR_FILENO); /* Store original stderr */
+
+	/* Redirect stdout to the desired file */
+	if (dup2(fileno(file_fp), STDOUT_FILENO) == -1 ) {
+		fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+		fclose(file_fp);
+		fclose(file_fp_err);
+		return -1;
+	}
+	
+	/* Redirect stderr to /dev/null */
+	if (dup2(fileno(file_fp_err), STDERR_FILENO) == -1) {
+		fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+		fclose(file_fp);
+		fclose(file_fp_err);
+		return -1;
+	}
+	
+	fclose(file_fp);
+	fclose(file_fp_err);
+
+	char *cmd[] = { "file", "-b", file, NULL };
+	int ret = launch_execve(cmd, FOREGROUND);
+	
+	dup2(stdout_bk, STDOUT_FILENO); /* Restore original stdout */
+	dup2(stderr_bk, STDERR_FILENO); /* Restore original stderr */
+	close(stdout_bk);
+	close(stderr_bk);
+
+	if (ret != EXIT_SUCCESS)
+		return -1;
+
+	int is_iso = 0;
+	if (access(ISO_TMP_FILE, F_OK) == 0) {
+
+		file_fp = fopen(ISO_TMP_FILE, "r");
+
+		if (file_fp) {
+			char line[255] = "";
+			fgets(line, sizeof(line), file_fp);
+			char *ret = strstr(line, "ISO 9660");
+			if (ret)
+				is_iso = 1;
+			fclose(file_fp);
+		}
+		remove(ISO_TMP_FILE);
+	}
+
+	if (is_iso)
+		return EXIT_SUCCESS;
+
+	return EXIT_FAILURE;
+}
+
 void
 print_tips(int all)
 /* Print either all tips (if ALL == 1) or just a random one (ALL == 0) */
 {
 	const char *TIPS[] = {
+		"Try the autocd and auto-open functions: run 'FILE' instead "
+		"of 'open FILE' or 'cd FILE'",
+		"Add a new entry to the mimelist file with 'mm edit'",
+		"Do not forget to take a look at the manpage",
 		"If need more speed, try the light mode (A-y)",
 		"The Selection Box is shared among different instances of CliFM",
 		"Select files here and there with the 's' command",
 		"Use wildcards with the 's' command: 's *.c'",
-		"ELN's and the 'sel' keyword work for shell commands as well: 'file 1 sel'",
-		"Press TAB to automatically expand an ELN: 'o 2' -> TAB -> 'o FILENAME'",
-		"Easily copy everything in CWD into another directory: 's * && c sel ELN/DIR'",
-		"Use ranges (ELN-ELN) to easily move multiple files: 'm 3-12 ELN/DIR'",
+		"ELN's and the 'sel' keyword work for shell commands as well: "
+		"'file 1 sel'",
+		"Press TAB to automatically expand an ELN: 'o 2' -> TAB -> "
+		"'o FILENAME'",
+		"Easily copy everything in CWD into another directory: 's * "
+		"&& c sel ELN/DIR'",
+		"Use ranges (ELN-ELN) to easily move multiple files: 'm 3-12 "
+		"ELN/DIR'",
 		"Trash files with a simple 't ELN'",
 		"Get mime information for a file: 'mm info ELN'",
-		"Edit the mimelist file with 'mm edit'",
 		"If too many files are listed, try enabling the pager ('pg on')",
-		"Once in the pager, go backwards pressing the keyboard shortcut provided by your terminal emulator",
+		"Once in the pager, go backwards pressing the keyboard shortcut "
+		"provided by your terminal emulator",
 		"Press 'q' to stop the pager",
 		"Press 'A-l' to switch to long view mode",
 		"Search for files using the slash command: '/*.png'",
@@ -1032,8 +1380,8 @@ print_tips(int all)
 		"Import aliases from file using 'alias import FILE'",
 		"List available aliases by running 'alias'",
 		"Open and edit the configuration file with 'edit'",
-		"Find a description for each CLiFM command running 'cmd'",
-		"Print the color codes list entering 'cc'",
+		"Find a description for each CLiFM command by running 'cmd'",
+		"Print the currently used color codes list by entering 'cc'",
 		"Press 'A-i' to toggle hidden files on/off",
 		"List mountpoints by pressing 'A-m'",
 		"Allow the use of shell commands with the -x option: 'clifm -x'",
@@ -1042,14 +1390,17 @@ print_tips(int all)
 		"Press 'F10' to open and edit the configuration file",
 		"Customize the starting using the -p option: 'clifm -p PATH'",
 		"Use the 'o' command to open files and directories: 'o 12'",
-		"Bypass the resource opener specifying an application: 'o 12 leafpad'",
+		"Bypass the resource opener specifying an application: 'o 12 "
+		"leafpad'",
 		"Open a file and send it to the background running 'o 24 &'",
 		"Create a custom prompt editing the configuration file",
 		"Customize color codes using the configuration file",
 		"Open the bookmarks manager by just pressing 'A-b'",
 		"Chain commands using ; and &&: 's 2 7-10; r sel'",
-		"Add emojis to the prompt by copying them to the Prompt line in the configuration file",
-		"Create a new profile running 'pf add PROFILE' or 'clifm -P PROFILE'",
+		"Add emojis to the prompt by copying them to the Prompt line "
+		"in the configuration file",
+		"Create a new profile running 'pf add PROFILE' or 'clifm -P "
+		"PROFILE'",
 		"Switch profiles using 'pf set PROFILE'",
 		"Delete a profile using 'pf del PROFILE'",
 		"Copy selected files into CWD by just running 'v sel'",
@@ -1066,8 +1417,10 @@ print_tips(int all)
 		"Launch the default system shell in CWD using ':' or ';'",
 		"Use 'A-z' and 'A-x' to switch sorting methods",
 		"Reverse sorting order using the 'rev' option: 'st rev'",
-		"Compress and decompress files using the 'ac' and 'ad' commands respectivelly",
-		"Rename multiple files at once with the bulk rename function: 'br *.txt'",
+		"Compress and decompress files using the 'ac' and 'ad' "
+		"commands respectivelly",
+		"Rename multiple files at once with the bulk rename function: "
+		"'br *.txt'",
 		NULL
 	};
 
@@ -1086,10 +1439,15 @@ print_tips(int all)
 }
 
 int
-is_compressed(char *file)
+is_compressed(char *file, int check_iso)
 /* Run the 'file' command on FILE and look for "archive" and
  * "compressed" strings in its output. Returns zero if compressed,
- * one if not, and -1 in case of error */
+ * one if not, and -1 in case of error.
+ * check_iso is used to determine if ISO files should be checked as
+ * well: this is the case when called from open_function() or
+ * mime_open(), since both need to check compressed and ISOs as
+ * well (and there is no need to run two functions (is_compressed and
+ * check_iso), when we can run just one) */
 {
 	if (!file || !*file) {
 		fputs(_("Error opening temporary file\n"), stderr);
@@ -1167,9 +1525,16 @@ is_compressed(char *file)
 				ret = strstr(line, "compressed");
 				if (ret)
 					compressed = 1;
+				else if (check_iso) {
+					ret = strstr(line, "ISO 9660");
+					if (ret)
+						compressed = 1;
+				}
 			}
+
 			fclose(file_fp);
 		}
+
 		remove(ARCHIVER_TMP_FILE);
 	}
 
@@ -1375,8 +1740,20 @@ archiver(char **args, char mode)
 
 
 				/* ##########################
-				 * #	NO ZSTANDARD		#
+				 * #		ISO 9660		#
 				 * ########################## */
+
+		if (strcmp(ret, ".iso") == 0) {
+			exit_status = create_iso(args[1], name);
+			free(name);
+			return exit_status;
+		}
+
+
+				/* ##########################
+				 * #		  OTHERS		#
+				 * ########################## */
+
 
 		/* Escape the string, if needed */
 		char *esc_name = escape_str(name);
@@ -1422,6 +1799,41 @@ archiver(char **args, char mode)
 			 * #      2 - DECOMPRESSION		    #
 			 * ##################################*/
 
+	/* Exit if at least one non-compressed file is found */
+	for (i = 1; args[i]; i++) {
+		char *deq = (char *)NULL;
+
+		if (strchr(args[i], '\\'))
+			deq = dequote_str(args[i], 0);
+
+		if (is_compressed((deq) ? deq : args[i], 1) != 0) {
+			fprintf(stderr, _("archiver: '%s': Not an "
+					"archive/compressed file\n"), args[i]);
+			if (deq)
+				free(deq);
+
+			return EXIT_FAILURE;
+		}
+
+		if (deq)
+			free(deq);
+	}
+
+
+				/* ##########################
+				 * #		ISO 9660		#
+				 * ########################## */
+
+	char *ret = strrchr(args[1], '.');
+	if ((ret && strcmp(ret, ".iso") == 0)
+	|| check_iso(args[1]) == 0) {
+		return handle_iso(args[1]);
+	}
+
+				/* ##########################
+				 * #		ZSTANDARD		#
+				 * ########################## */
+
 	/* Check if we have at least one Zstandard file */
 
 	int zst_index = -1;
@@ -1437,10 +1849,6 @@ archiver(char **args, char mode)
 			}
 		}
 	}
-
-				/* ##########################
-				 * #		ZSTANDARD		#
-				 * ########################## */
 
 	if (zst_index != -1) {
 
@@ -1505,10 +1913,12 @@ archiver(char **args, char mode)
 
 
 				/* ##########################
-				 * #	NO ZSTANDARD		#
+				 * #		  OTHERS		#
 				 * ########################## */
 
-	/* 1) Get operation to be performed */
+	/* 1) Get operation to be performed
+	 * ################################ */
+
 	printf(_("%s[e]%sxtract %s[E]%sxtract-to-dir %s[l]%sist "
 		  "%s[m]%sount %s[r]%sepack %s[q]%suit\n"), bold, NC, bold,
 		  NC, bold, NC, bold, NC, bold, NC, bold, NC);
@@ -1552,47 +1962,21 @@ archiver(char **args, char mode)
 			break;
 	}
 
-	/* 2) Prepare files based on operation */
+	/* 2) Prepare files based on operation
+	 * #################################### */
+
 	char *dec_files = (char *)NULL;
 
 	switch(sel_op) {
 		case 'e':
 		case 'r': {
 
-			/* Store all filenames in one single variable */
+			/* Store all filenames into one single variable */
 			size_t len = 1;
 			dec_files = (char *)xnmalloc(len, sizeof(char));
 			*dec_files = 0x00;
 
 			for (i = 1; args[i]; i++) {
-
-				/* Deescape string, if necessary */
-				char *deq_str = (char *)NULL;
-				char *tmp = strchr(args[i], '\\');
-
-				if (tmp) {
-					deq_str = dequote_str(args[i], 0);
-					tmp = (char *)NULL;
-				}
-				
-				/* Do not add a file to the list of files if not
-				 * compressed */
-				int ret = is_compressed((deq_str) ? deq_str : args[i]);
-
-				if (deq_str)
-					free(deq_str);
-
-				if (ret == -1) {
-				/* Error message is printed by is_compressed() itself */
-					free(dec_files);
-					return EXIT_FAILURE;
-				}
-
-				if (ret == 1) {
-					fprintf(stderr, _("archiver: '%s': Not an "
-							"archive/compressed file\n"), args[i]);
-					continue;
-				}
 
 				len += strlen(args[i]) + 1;
 				dec_files = (char *)xrealloc(dec_files, (len + 1)
@@ -1607,7 +1991,8 @@ archiver(char **args, char mode)
 		case 'l':
 		case 'm': {
 
-			/* Dequote filenames, if neccessary */
+			/* These operation won't be executed via the system shell,
+			 * so that we need to deescape files if necessary */
 			for (i = 1; args[i]; i++) {
 
 				 if (strchr(args[i], '\\')) {
@@ -1628,7 +2013,8 @@ archiver(char **args, char mode)
 		break;
 	}
 
-	/* 3) Construct the corresponding commands */
+	/* 3) Construct and run the corresponding commands
+	 * ############################################### */
 
 	switch(sel_op) {
 
@@ -1654,26 +2040,13 @@ archiver(char **args, char mode)
 		case 'E':
 			for (i = 1; args[i]; i++) {
 
-				/* Do not attempt to extract a file that is not
-				 * an archive */
-				int ret = is_compressed(args[i]);
-
-				if (ret == -1)
-					return EXIT_FAILURE;
-
-				if (ret == 1) {
-					fprintf(stderr, _("archiver: '%s': Not an "
-							"archive/compressed file\n"), args[i]);
-					continue;
-				}
-
 				/* Ask for extraction path */
 				printf(_("%sFile%s: %s\n"), bold, NC, args[i]);
 
 				char *ext_path = (char *)NULL;
 
 				while (!ext_path) {
-					ext_path = rl_no_hist(_("Path: "));
+					ext_path = rl_no_hist(_("Extraction path: "));
 
 					if (!ext_path)
 						continue;
@@ -1716,19 +2089,6 @@ archiver(char **args, char mode)
 
 		case 'm':
 			for (i = 1; args[i]; i++) {
-
-				/* Do not attempt to mount a file that is not
-				 * an archive */
-				int ret = is_compressed(args[i]);
-
-				if (ret == -1)
-					return EXIT_FAILURE;
-
-				if (ret == 1) {
-					fprintf(stderr, _("archiver: '%s': Not an "
-							"archive/compressed file\n"), args[i]);
-					continue;
-				}
 
 				/* Create mountpoint */
 				char *mountpoint = (char *)NULL;
@@ -4271,16 +4631,37 @@ int mime_open(char **args)
 
 	/* Get default application for MIME or extension */
 	char *app = get_app(mime, ext);
+
 	if (!app) {
+
 		if (info)
 			fputs(_("Associated application: None\n"), stderr);			
-		else
-			fprintf(stderr, _("%s: No associated application found\n"), 
-					PROGRAM_NAME);
+
+		else {
+
+			/* If an archive/compressed file, run archiver() */
+			if (is_compressed(file_path, 1) == 0) {
+
+				char *tmp_cmd[] = { "ad", file_path, NULL };
+				int exit_status = archiver(tmp_cmd, 'd');
+				free(file_path);
+				free(mime);
+				if (ext)
+					free(ext);
+				return exit_status;
+			}
+
+			else
+				fprintf(stderr, _("%s: No associated application found\n"), 
+						PROGRAM_NAME);
+		}
+
 		free(file_path);
 		free(mime);
+
 		if (ext)
 			free(ext);
+
 		return EXIT_FAILURE;
 	}
 	
@@ -4827,7 +5208,7 @@ is_internal_c(const char *cmd)
 					"colors", "cc", "fs", "mm", "mime", "x", "n",
 					"net", "lm", "st", "sort", "fc", "tips", "br",
 					"bulk", "opener", "ac", "ad", "acd", "autocd",
-					"ao", "autoopen", NULL };
+					"ao", "auto-open", NULL };
 
 	short found = 0;
 	size_t i;
@@ -5875,34 +6256,38 @@ open_function(char **cmd)
 	if (!cmd)
 		return EXIT_FAILURE;
 
-	char *deq_path = dequote_str(cmd[1], 0);
+	if (strchr(cmd[1], '\\')) {
+		char *deq_path = (char *)NULL;
+		deq_path = dequote_str(cmd[1], 0);
 
-	if (!deq_path) {
-		fprintf(stderr, _("%s: '%s': Error dequoting filename\n"), 
-				PROGRAM_NAME, cmd[1]);
-		return EXIT_FAILURE;
+		if (!deq_path) {
+			fprintf(stderr, _("%s: '%s': Error dequoting filename\n"), 
+					PROGRAM_NAME, cmd[1]);
+			return EXIT_FAILURE;
+		}
+
+		strcpy(cmd[1], deq_path);
+		free(deq_path);
 	}
 	
 	/* Check file existence */
 	struct stat file_attrib;
 
-	if (lstat(deq_path, &file_attrib) == -1) {
-		fprintf(stderr, "%s: open: '%s': %s\n", PROGRAM_NAME, deq_path, 
+	if (stat(cmd[1], &file_attrib) == -1) {
+		fprintf(stderr, "%s: open: '%s': %s\n", PROGRAM_NAME, cmd[1], 
 				strerror(errno));
-		free(deq_path);
 		return EXIT_FAILURE;
 	}
 	
 	/* Check file type: only directories, symlinks, and regular files
 	 * will be opened */
 
-	char *linkname = (char *)NULL, file_tmp[PATH_MAX] = "",
-		  is_link = 0, no_open_file = 1, file_type[128] = "";
+	char file_tmp[PATH_MAX] = "", no_open_file = 1, file_type[128] = "";
 		 /* Reserve a good amount of bytes for filetype: it cannot be
 		  * known beforehand how many bytes the TRANSLATED string will
 		  * need */
 
-	switch (file_attrib.st_mode & S_IFMT) {
+	switch((file_attrib.st_mode & S_IFMT)) {
 	case S_IFBLK:
 		/* Store filetype to compose and print the error message, if 
 		 * necessary */
@@ -5922,58 +6307,16 @@ open_function(char **cmd)
 		break;
 
 	case S_IFDIR:
-		free(deq_path);
-		return (cd_function(cmd[1]));
-
-	/* If a symlink, find out whether it is a symlink to dir or to
-	 * file */
-	case S_IFLNK:
-		linkname = realpath(deq_path, NULL);
-		if (!linkname) {
-			if (errno == ENOENT)
-				fprintf(stderr, _("%s: open: '%s': Broken link\n"), 
-							PROGRAM_NAME, deq_path);
-			else
-				fprintf(stderr, "%s: open: '%s': %s\n", PROGRAM_NAME,
-						deq_path, strerror(errno));
-
-			free(deq_path);
-			return EXIT_FAILURE;
-		}
-		stat(linkname, &file_attrib);
-		switch (file_attrib.st_mode & S_IFMT) {
-		/* Realpath() will never return a symlink, but an absolute 
-		 * path, so that there is no need to check for symlinks */
-		case S_IFBLK:
-			strcpy(file_type, _("block device"));
-			break;
-		case S_IFCHR:
-			strcpy(file_type, _("character device"));
-			break;
-		case S_IFSOCK:
-			strcpy(file_type, _("socket"));
-			break;
-		case S_IFIFO:
-			strcpy(file_type, _("FIFO/pipe"));
-			break;
-		case S_IFDIR:
-			free(deq_path);
-			int ret = cd_function(linkname);
-			free(linkname);
-			return ret;
-		case S_IFREG:
-		/* Set the no_open_file flag to false, since regular files)
-		 * will be opened */
-			no_open_file = 0;
-			strncpy(file_tmp, linkname, PATH_MAX);
-			break;
-		default:
-			strcpy(file_type, _("unknown file type"));
-				break;
-		}
-		break;
-
+		return cd_function(cmd[1]);
+	
 	case S_IFREG:
+
+		/* If an archive/compressed file, call archiver() */
+		if (is_compressed(cmd[1], 1) == 0) {
+			char *tmp_cmd[] = { "ad", cmd[1], NULL };
+			return archiver(tmp_cmd, 'd');
+		}
+
 		no_open_file = 0;
 		break;
 	
@@ -5986,32 +6329,17 @@ open_function(char **cmd)
 	 * or regular file), print the corresponding error message and
 	 * exit */
 	if (no_open_file) {
-		if (linkname) {
-			fprintf(stderr, _("%s: %s -> '%s' (%s): Cannot open file. "
-							  "Try 'APPLICATION FILENAME'.\n"),
-							  PROGRAM_NAME, deq_path, linkname,
-							  file_type);
-			free(linkname);
-			linkname = (char *)NULL;
-		}
-		else
-			fprintf(stderr, _("%s: '%s' (%s): Cannot open file. Try "
-					"'APPLICATION FILENAME'.\n"), PROGRAM_NAME,
-					deq_path, file_type);
-		free(deq_path);
+		fprintf(stderr, _("%s: '%s' (%s): Cannot open file. Try "
+				"'APPLICATION FILENAME'.\n"), PROGRAM_NAME,
+				cmd[1], file_type);
 		return EXIT_FAILURE;
 	}
 	
-	if (linkname) {
-		free(linkname);
-		linkname = (char *)NULL;
-	}
-
 	/* At this point we know the file to be openend is either a regular
 	 * file or a symlink to a regular file. So, just open the file */
 
 	if (!cmd[2] || strcmp(cmd[2], "&") == 0) {
-		free(deq_path);
+
 		if (!(flags & FILE_CMD_OK)) {
 			fprintf(stderr, _("%s: 'file' command not found. Specify an "
 							  "application to open the file\nUsage: "
@@ -6019,30 +6347,33 @@ open_function(char **cmd)
 							  PROGRAM_NAME);
 			return EXIT_FAILURE;
 		}
+
 		else {
 			int ret = mime_open(cmd);
-			/* The return value of mime_open could be zero (EXIT_SUCCESS),
-			 * if success, one (EXIT_FAILURE) if error (in which case the
-			 * following error message should be printed), and -1 if no
-			 * access permission, in which case no error message should
-			 * be printed, since the corresponding message is printed
-			 * by mime_open itself */
+
+			/* The return value of mime_open could be zero
+			 * (EXIT_SUCCESS), if success, one (EXIT_FAILURE) if error
+			 * (in which case the following error message should be
+			 * printed), and -1 if no access permission, in which case
+			 * no error message should be printed, since the
+			 * corresponding message is printed by mime_open itself */
 			if (ret == EXIT_FAILURE) {
-				fputs("Try 'open FILE APPLICATION'\n", stderr);
+				fputs("Add a new entry to the mimelist file ('mime "
+					  "edit') or run 'open FILE APPLICATION'\n",
+					  stderr);
 				return EXIT_FAILURE;
 			}
+
 			return EXIT_SUCCESS;
 		}
 	}
 
 	/* If some application was specified to open the file */
-	char *tmp_cmd[] = { cmd[2], (is_link) ? file_tmp : deq_path, NULL };
+	char *tmp_cmd[] = { cmd[2], cmd[1], NULL };
 
 	int ret = launch_execve(tmp_cmd, (cmd[args_n] 
 							&& strcmp(cmd[args_n], "&") == 0)
 							? BACKGROUND : FOREGROUND);
-
-	free(deq_path);
 
 	if (ret != EXIT_SUCCESS)
 		return EXIT_FAILURE;
@@ -7564,6 +7895,11 @@ readline_kbinds(void)
  * terminator, and st (with some patches, however, they might stop working
  * in st) */
 
+	rl_bind_keyseq("\\x1b[H", readline_kbind_action); /* HOME: 72 */
+	rl_bind_keyseq("\\x1b[1;3A", readline_kbind_action); /* key: 65 */
+	rl_bind_keyseq("\\x1b[1;3B", readline_kbind_action); /* key: 66 */
+	rl_bind_keyseq("\\x1b[1;3C", readline_kbind_action); /* key: 67 */
+	rl_bind_keyseq("\\x1b[1;3D", readline_kbind_action); /* key: 68 */
 	rl_bind_keyseq("\\M-c", readline_kbind_action); /* key: 99 */
 	rl_bind_keyseq("\\M-u", readline_kbind_action); /* key: 117 */
 	rl_bind_keyseq("\\M-j", readline_kbind_action); /* key: 106 */
@@ -7699,6 +8035,8 @@ readline_kbind_action(int count, int key) {
 	/* Prevent Valgrind from complaining about unused variable */
 	if (count) {}
 
+/*	printf("Key: %d\n", key); */
+
 	/* Disable all keybindings while in the bookmarks or mountpoints
 	 * screen */
 	if (kbind_busy)
@@ -7754,8 +8092,9 @@ readline_kbind_action(int count, int key) {
 		keybind_exec_cmd("ds a");
 		break;
 
-	/* A-e: Change CWD to the HOME directory */
-	case 101:
+	/* Change CWD to the HOME directory */
+	case 72: /* HOME */
+	case 101: /* A-e */
 		/* If already in the home dir, do nothing */
 		if (strcmp(path, user_home) == 0)
 			return 0;
@@ -7801,16 +8140,19 @@ readline_kbind_action(int count, int key) {
 
 		break;
 
-	/* A-j: Change CWD to PREVIOUS directoy in history */
-	case 106: 
+	/* Change CWD to PREVIOUS directoy in history */
+	case 68: /* A-Left */
+	case 66: /* A-Down */
+	case 106: 	/* A-j: */
 		/* If already at the beginning of dir hist, do nothing */
 		if (dirhist_cur_index == 0)
 			return 0;
 		keybind_exec_cmd("back");
 		break;
 		
-	/* A-k: Change CWD to NEXT directory in history */
-	case 107:
+	/* Change CWD to NEXT directory in history */
+	case 67: /* A-Right */
+	case 107: /* A-k */
 		/* If already at the end of dir hist, do nothing */
 		if (dirhist_cur_index + 1 == dirhist_total_index)
 			return 0;
@@ -7851,8 +8193,9 @@ readline_kbind_action(int count, int key) {
 		keybind_exec_cmd("sb");
 		break;
 
-	/* A-u: Change CWD to PARENT directory */
-	case 117:
+	/* Change CWD to PARENT directory */
+	case 65: /* A-Up */
+	case 117: /* A-u */
 		/* If already root dir, do nothing */
 		if (strcmp(path, "/") == 0)
 			return 0;
@@ -12004,6 +12347,11 @@ list_dir(void)
 		return EXIT_FAILURE;
 	}
 
+	if (file_info) {
+		free(file_info);
+		file_info = (struct fileinfo *)NULL;
+	}
+
 	if (light_mode)
 		return list_dir_light();
 	
@@ -12084,13 +12432,9 @@ list_dir(void)
 	/* Struct to store information about each file, so that we don't
 	 * need to run stat() and strlen() again later, perhaps hundreds
 	 * of times */
-/*	struct fileinfo *file_info = (struct fileinfo *)xnmalloc(
-					(size_t)total + 1, sizeof(struct fileinfo)); */
 
-	if (file_info)
-		free(file_info);
-
-	file_info = (struct fileinfo *)xnmalloc(
+	if (total > 0)
+		file_info = (struct fileinfo *)xnmalloc(
 					(size_t)total + 1, sizeof(struct fileinfo));
 
 	if (list_folders_first) {
@@ -12737,9 +13081,6 @@ list_dir_light(void)
 		else
 			return EXIT_FAILURE;
 	}
-
-	if (file_info)
-		free(file_info);
 
 	file_info = (struct fileinfo *)xnmalloc(
 					(size_t)total + 1, sizeof(struct fileinfo));
@@ -13402,12 +13743,36 @@ exec_cmd(char **comm)
 		}
 	}
 
-				/* #### AUTOCD & AUTOOPEN #### */
+				/* ###############################
+				 * #	 AUTOCD & AUTOOPEN (1)   #
+				 * ############################### */
 
-	/* Only autocd or autoopen if there is no second argument of if
-	 * second argument is "&" */
-	if ((autocd || auto_open) && (!comm[1] || (*comm[1] == '&')
-	&& comm[1][1] == '\0')) {
+	if (autocd || auto_open) {
+		/* Expand tilde */
+		if (*comm[0] == '~') {
+			char *exp_path = tilde_expand(comm[0]);
+			if (exp_path) {
+				comm[0] = (char *)xrealloc(comm[0],	(strlen(exp_path)
+										   + 1) * sizeof(char));
+				strcpy(comm[0], exp_path);
+				free(exp_path);
+			}
+		}
+
+		/* Deescape the string */
+		if (strchr(comm[0], '\\')) {
+			char *deq_str = dequote_str(comm[0], 0);
+			if (deq_str) {
+				strcpy(comm[0], deq_str);
+				free(deq_str);
+			}
+		}
+	}
+
+	/* Only autocd or auto-open here if not absolute path, and if there
+	 * is no second argument or if second argument is "&" */
+	if (*comm[0] != '/' && (autocd || auto_open)
+	&& (!comm[1] || (*comm[1] == '&' && comm[1][1] == '\0'))) {
 
 		char *tmp = comm[0];
 		size_t i, tmp_len = strlen(tmp);
@@ -13769,19 +14134,19 @@ exec_cmd(char **comm)
 		if (comm[1]) {
 			if (strcmp(comm[1], "on") == 0) {
 				light_mode = 1;
-				puts("Light mode is on");
+				puts(_("Light mode is on"));
 			}
 			else if (strcmp(comm[1], "off") == 0) {
 				light_mode = 0;
-				puts("Light mode is off");
+				puts(_("Light mode is off"));
 			}
 			else {
-				puts("Usage: lm [on, off]");
+				puts(_("Usage: lm [on, off]"));
 				exit_code = EXIT_FAILURE;
 			}
 		}
 		else {
-			fputs("Usage: lm [on, off]\n", stderr);
+			fputs(_("Usage: lm [on, off]\n"), stderr);
 			exit_code = EXIT_FAILURE;
 		}
 	}
@@ -14146,29 +14511,29 @@ exec_cmd(char **comm)
 	|| strcmp(comm[0], "autocd") == 0) {
 
 		if (!comm[1]) {
-			fputs("Usage: acd, autocd [on, off, status]\n", stderr);
+			fputs(_("Usage: acd, autocd [on, off, status]\n"), stderr);
 			exit_code = EXIT_FAILURE;
 			return EXIT_FAILURE;
 		}
 
 		if (strcmp(comm[1], "on") == 0) {
 			autocd = 1;
-			printf("%s: autocd is enabled\n", PROGRAM_NAME);
+			printf(_("%s: autocd is enabled\n"), PROGRAM_NAME);
 		}
 		else if (strcmp(comm[1], "off") == 0) {
 			autocd = 0;
-			printf("%s: autocd is disabled\n", PROGRAM_NAME);
+			printf(_("%s: autocd is disabled\n"), PROGRAM_NAME);
 		}
 		else if (strcmp(comm[1], "status") == 0) {
 			if (autocd)
-				printf("%s: autocd is enabled\n", PROGRAM_NAME);
+				printf(_("%s: autocd is enabled\n"), PROGRAM_NAME);
 			else
-				printf("%s: autocd is disabled\n", PROGRAM_NAME);
+				printf(_("%s: autocd is disabled\n"), PROGRAM_NAME);
 		}
 		else if (strcmp(comm[1], "--help") == 0)
-			puts("Usage: acd, autocd [on, off, status]");
+			puts(_("Usage: acd, autocd [on, off, status]"));
 		else {
-			fputs("Usage: acd, autocd [on, off, status]\n", stderr);
+			fputs(_("Usage: acd, autocd [on, off, status]\n"), stderr);
 			exit_code = EXIT_FAILURE;
 			return EXIT_FAILURE;
 		}
@@ -14176,32 +14541,32 @@ exec_cmd(char **comm)
 
 					/* #### AUTOOPEN #### */
 	else if (strcmp(comm[0], "ao") == 0
-	|| strcmp(comm[0], "autoopen") == 0) {
+	|| strcmp(comm[0], "auto-open") == 0) {
 
 		if (!comm[1]) {
-			fputs("Usage: ao, autoopen [on, off, status]\n", stderr);
+			fputs(_("Usage: ao, auto-open [on, off, status]\n"), stderr);
 			exit_code = EXIT_FAILURE;
 			return EXIT_FAILURE;
 		}
 
 		if (strcmp(comm[1], "on") == 0) {
 			auto_open = 1;
-			printf("%s: autoopen is enabled\n", PROGRAM_NAME);
+			printf(_("%s: auto-open is enabled\n"), PROGRAM_NAME);
 		}
 		else if (strcmp(comm[1], "off") == 0) {
 			auto_open = 0;
-			printf("%s: autoopen is disabled\n", PROGRAM_NAME);
+			printf(_("%s: auto-open is disabled\n"), PROGRAM_NAME);
 		}
 		else if (strcmp(comm[1], "status") == 0) {
 			if (auto_open)
-				printf("%s: autoopen is enabled\n", PROGRAM_NAME);
+				printf(_("%s: auto-open is enabled\n"), PROGRAM_NAME);
 			else
-				printf("%s: autoopen is disabled\n", PROGRAM_NAME);
+				printf(_("%s: auto-open is disabled\n"), PROGRAM_NAME);
 		}
 		else if (strcmp(comm[1], "--help") == 0)
-			puts("Usage: ao, autoopen [on, off, status]");
+			puts(_("Usage: ao, auto-open [on, off, status]"));
 		else {
-			fputs("Usage: ao, autoopen [on, off, status]\n", stderr);
+			fputs(_("Usage: ao, auto-open [on, off, status]\n"), stderr);
 			exit_code = EXIT_FAILURE;
 			return EXIT_FAILURE;
 		}
@@ -14253,30 +14618,45 @@ exec_cmd(char **comm)
 	}
 
 
+	else {
+
+				/* ###############################
+				 * #	 AUTOCD & AUTOOPEN (2)   #
+				 * ############################### */
+
+		struct stat file_attrib;
+		if (stat(comm[0], &file_attrib) == 0) {
+			if ((file_attrib.st_mode & S_IFMT) == S_IFDIR) {
+
+				if (autocd) {
+					exit_code = cd_function(comm[0]);
+					return exit_code;
+				}
+
+				fprintf(stderr, _("%s: '%s': Is a directory\n"), 
+						PROGRAM_NAME, comm[0]);
+				exit_code = EXIT_FAILURE;
+				return EXIT_FAILURE;
+			}
+
+			else if (auto_open && (file_attrib.st_mode & S_IFMT)
+			== S_IFREG) {
+				/* Make sure we have not an executable file */
+				if (!(file_attrib.st_mode
+				& (S_IXUSR|S_IXGRP|S_IXOTH))) {
+
+					char *cmd[] = { "open", comm[0], (comm[1])
+									? comm[1] : NULL, NULL };
+					exit_code = open_function(cmd);
+					return exit_code;
+				}
+			}
+		}
+
 	/* ####################################################   
 	 * #				EXTERNAL/SHELL COMMANDS			  #     
 	 * ####################################################*/
 
-	else {
-
-		/* IF NOT A COMMAND, BUT A DIRECTORY... */
-		if (*comm[0] == '/') {
-			struct stat file_attrib;
-			if (lstat(comm[0], &file_attrib) == 0) {
-				if ((file_attrib.st_mode & S_IFMT) == S_IFDIR ) {
-
-					if (autocd) {
-						exit_code = cd_function(comm[0]);
-						return exit_code;
-					}
-
-					fprintf(stderr, _("%s: '%s': Is a directory\n"), 
-							PROGRAM_NAME, comm[0]);
-					exit_code = EXIT_FAILURE;
-					return EXIT_FAILURE;
-				}
-			}
-		}
 
 		/* LOG EXTERNAL COMMANDS 
 		* 'no_log' will be true when running profile or prompt commands */
@@ -15156,7 +15536,7 @@ search_function(char **comm)
 		 *search_path = (char *)NULL;
 	mode_t file_type = 0;
 	struct stat file_attrib;
-	
+
 	/* If there are two arguments, the one starting with '-' is the
 	 * filetype and the other is the path */
 	if (comm[1] && comm[2]) {
@@ -17828,6 +18208,7 @@ be: 0 = none, 1 = name, 2 = size, 3 = atime, \
 		PROGRAM_NAME);
 
 	puts(_("\nBUILT-IN COMMANDS:\n\n\
+ ELN/FILE/DIR (auto-open and autocd)\n\
  /* [DIR]\n\
  bm, bookmarks [a, add PATH] [d, del] [edit] [SHORTCUT or NAME]\n\
  o, open [ELN/FILE] [APPLICATION]\n\
@@ -17864,7 +18245,7 @@ be: 0 = none, 1 = name, 2 = size, 3 = atime, \
  rf, refresh\n\
  cc, colors\n\
  acd, autocd [on, off, status]\n\
- ao, autoopen [on, off, status]\n\
+ ao, auto-open [on, off, status]\n\
  hf, hidden [on, off, status]\n\
  ff, folders first [on, off, status]\n\
  fc, filescounter [on, off, status]\n\
